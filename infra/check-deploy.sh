@@ -29,11 +29,20 @@ want=$(sed "s/BUCKET/stopsignal-archive-$ACCOUNT/g; s/ACCOUNT/$ACCOUNT/g" "$(dir
   || fail "$NAME's grants are not exactly infra/deploy-user-policy.json: infra/deploy-user.sh rewrites the inline policy; remove any other policy or group by hand"
 pass "$NAME holds only infra/deploy-user-policy.json and is in no group"
 
-# Names only, as gh cannot read a value: the key's two halves and no other secret named for AWS.
-aws_secrets=$(gh secret list -R "$REPO" --json name --jq '[.[].name | select(test("aws"; "i"))] | sort | join(" ")')
-[ "$aws_secrets" = "AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY" ] \
-  || fail "$REPO's AWS secrets are '$aws_secrets', not AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY; run infra/deploy-user.sh --rotate-key"
-pass "$REPO stores AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY and no other AWS secret"
+# Names only, as gh cannot read a value: the key's two halves live in the deploy environment, and no
+# repository-level secret is named for AWS, since every workflow on every branch can read those.
+env_secrets=$(gh secret list -R "$REPO" -e deploy --json name --jq '[.[].name] | sort | join(" ")')
+[ "$env_secrets" = "AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY" ] \
+  || fail "the deploy environment's secrets are '$env_secrets', not AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY; run infra/deploy-user.sh --rotate-key"
+repo_aws=$(gh secret list -R "$REPO" --json name --jq '[.[].name | select(test("aws"; "i"))] | join(" ")')
+[ -z "$repo_aws" ] || fail "$REPO holds repository-level AWS secrets: $repo_aws; delete them, as the key belongs in the deploy environment"
+pass "the deploy environment holds AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, and the repository no AWS secret"
+
+# Only master may deploy: a custom branch policy whose one rule is the branch master.
+[ "$(gh api "repos/$REPO/environments/deploy" --jq '.deployment_branch_policy == {protected_branches: false, custom_branch_policies: true}')" = true ] \
+  && [ "$(gh api "repos/$REPO/environments/deploy/deployment-branch-policies" --jq '[.branch_policies[] | {name, type}] == [{name: "master", type: "branch"}]')" = true ] \
+  || fail "the deploy environment does not limit deployments to the branch master alone"
+pass "the deploy environment accepts deployments from master alone"
 
 head=$(gh api "repos/$REPO/commits/master" --jq .sha)
 read -r run started_run sha < <(gh run list -R "$REPO" -w ci.yml -b master -s success -L 1 \

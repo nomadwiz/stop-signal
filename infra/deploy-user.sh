@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Creates what ci.yml's deploy job signs in with (#87): the IAM user stopsignal-deploy, holding only the
-# grants in infra/deploy-user-policy.json, and its access key, stored as the repository secrets
-# AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY. A key and not GitHub's OpenID Connect provider, because the
+# grants in infra/deploy-user-policy.json, and its access key, stored as AWS_ACCESS_KEY_ID and
+# AWS_SECRET_ACCESS_KEY in the secrets of the repository's deploy environment, which only master may use. A key and not GitHub's OpenID Connect provider, because the
 # account's AWS-managed service control policy denies iam:*Provider* and cannot be changed.
 #
 # Usage: infra/deploy-user.sh [--rotate-key]
 #   Run from the build repository's root with the AWS CLI profile `stopsignal` and gh signed in as someone
-#   who may set the repository's secrets. Safe to re-run: it creates the user only if missing, rewrites the
+#   who may set the deploy environment's secrets. Safe to re-run: it creates the user only if missing, rewrites the
 #   policy, and makes a key only when the user has no active one, or when given --rotate-key.
 #   The key is never displayed: it goes from AWS straight into gh secret set on standard input. To rotate,
 #   run with --rotate-key. IAM allows a user two keys, so rotation first deletes any inactive key, makes the
@@ -18,8 +18,8 @@ export AWS_PROFILE=stopsignal AWS_REGION=ap-southeast-2
 ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
 NAME=stopsignal-deploy
 REPO=nomadwiz/stop-signal
-# Sets one repository secret from standard input.
-secret() { gh secret set "$1" -R "$REPO"; }
+# Sets one of the deploy environment's secrets from standard input.
+secret() { gh secret set "$1" -R "$REPO" -e deploy; }
 
 aws iam get-user --user-name "$NAME" >/dev/null 2>&1 || aws iam create-user --user-name "$NAME" >/dev/null
 aws iam put-user-policy --user-name "$NAME" --policy-name deploy \
@@ -47,9 +47,9 @@ if ! { printf %s "$key" | jq -j .AccessKey.AccessKeyId | secret AWS_ACCESS_KEY_I
     && printf %s "$key" | jq -j .AccessKey.SecretAccessKey | secret AWS_SECRET_ACCESS_KEY; }; then
   aws iam delete-access-key --user-name "$NAME" --access-key-id "$id"
   [ -z "$active" ] || printf %s "$active" | secret AWS_ACCESS_KEY_ID
-  echo "FAIL: could not store the key in $REPO's secrets; the new key is deleted and the old one is in use again" >&2
+  echo "FAIL: could not store the key in the deploy environment's secrets; the new key is deleted and the old one is in use again" >&2
   exit 1
 fi
 unset key
 for k in $active; do aws iam delete-access-key --user-name "$NAME" --access-key-id "$k"; done
-echo "stored a new key for $NAME in $REPO's AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY; deleted any old one"
+echo "stored a new key for $NAME in the deploy environment's AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY; deleted any old one"

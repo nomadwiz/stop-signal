@@ -37,12 +37,14 @@ jobs:
       - run: npm run replay:check
 
   # Uploads capture.ts to S3 and has the host put it in place, restarting capture only if it changed
-  # (infra/capture-update.sh). It signs in as the IAM user stopsignal-deploy, whose key is in this
-  # repository's secrets and which may do nothing else (infra/deploy-user.sh). The account's AWS-managed
-  # service control policy denies the OpenID Connect provider a keyless sign-in would need.
+  # (infra/capture-update.sh). It signs in as the IAM user stopsignal-deploy, which may do nothing else
+  # (infra/deploy-user.sh). Its key is a secret of the deploy environment, whose branch policy admits master
+  # alone, so a workflow run on any other branch cannot read it. The account's AWS-managed service control
+  # policy denies the OpenID Connect provider a keyless sign-in would need.
   deploy:
     needs: suite
     if: github.ref == 'refs/heads/master'
+    environment: deploy
     runs-on: ubuntu-latest
     # One deploy at a time, and a newer one replaces any still waiting. That orders runs by when they were
     # queued, not by commit, so the step below also skips any run whose commit is no longer master's head.
