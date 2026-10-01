@@ -43,12 +43,13 @@ pass "Systems Manager reaches the instance"
 
 if [ "${1:-}" = reboot ]; then
   # reboot-instances returns before the guest restarts, so compare boot times to prove it did.
-  booted=$(on_host 'uptime -s')
+  booted=$(on_host 'uptime -s') || fail "cannot read the boot time"
   aws ec2 reboot-instances --instance-ids "$ID"
   echo "rebooting; waiting for the agent and the first poll"
   sleep 90
   wait_online || fail "Systems Manager cannot reach the instance after the reboot"
-  [ "$(on_host 'uptime -s')" != "$booted" ] || fail "the instance did not reboot"
+  now=$(on_host 'uptime -s') || fail "cannot read the boot time after the reboot"
+  [ "$now" != "$booted" ] || fail "the instance did not reboot"
   pass "the instance rebooted"
 fi
 
@@ -69,10 +70,32 @@ pass "the disk holds no snapshot older than 70 minutes"
 
 # The acceptance itself: a snapshot written more than 10 minutes ago is already in S3.
 # The newest such file is the one most likely to be missing, so it is the one checked.
-old=$(on_host 'cd /var/lib/stopsignal/archive && find . -name "*.pb.gz" -mmin +10 -mmin -15 | sort | tail -1')
+old=$(on_host 'cd /var/lib/stopsignal/archive && find . -name "*.pb.gz" -mmin +10 -mmin -15 | sort | tail -1') \
+  || fail "cannot list the host's archive"
 key=$(echo "$old" | grep -o '[0-9-]*/[0-9]*\.pb\.gz$') || fail "no snapshot 10–15 minutes old on the host yet; rerun once it has run 15 minutes"
 aws s3api head-object --bucket "$BUCKET" --key "raw/$key" >/dev/null 2>&1 || fail "raw/$key, written over 10 minutes ago, is not in S3"
 pass "raw/$key, written over 10 minutes ago, is in S3"
+
+# A single file cannot catch a slow sync: it misses only if the check runs late in the cycle.
+# Every key carries the epoch-ms it was written and S3 records when its upload finished, so measure
+# the delay of every snapshot of the last 30 minutes, listing yesterday's prefix too in case it is just after midnight UTC.
+read -r count worst < <(for day in $(python3 -c 'import datetime as d; t = d.datetime.now(d.timezone.utc); print((t - d.timedelta(days=1)).date(), t.date())'); do
+  aws s3api list-objects-v2 --bucket "$BUCKET" --prefix "raw/$day/" --query 'Contents[].[Key, LastModified]' --output text
+done | python3 -c '
+import sys, datetime as d
+now = d.datetime.now(d.timezone.utc).timestamp()
+delays = []
+for line in sys.stdin:
+    parts = line.split()
+    if len(parts) != 2:
+        continue
+    written = int(parts[0].rsplit("/", 1)[1].split(".")[0]) / 1000
+    if now - written <= 1800:
+        delays.append(d.datetime.fromisoformat(parts[1]).timestamp() - written)
+print(len(delays), round(max(delays, default=0)))')
+[ "$count" -gt 0 ] || fail "no snapshot of the last 30 minutes is in S3"
+[ "$worst" -le 600 ] || fail "a snapshot of the last 30 minutes took ${worst}s to reach S3, over 10 minutes"
+pass "$count snapshots of the last 30 minutes reached S3 within ${worst}s"
 
 for target in "s3://$BUCKET/elsewhere/probe" "s3://$BUCKET/deploy/probe"; do
   # Only AccessDenied counts: any other failure means the probe did not run.
