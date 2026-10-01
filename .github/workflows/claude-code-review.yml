@@ -1,0 +1,276 @@
+# Reviews every pull request with the agent-skills and ponytail plugins and posts
+# the result as a request-changes review, not a comment. A comment is something to
+# scroll past; a review is a state the author has to answer.
+#
+# The other half of this runs in nomadwiz/stop-signal-doc and reads this
+# repository. This one reads that one, because the two drift in opposite
+# directions and only the direction guarded here is expensive: the documents say
+# what StopSignal should be, so a change that departs from one is a defect in the
+# change.
+#
+# The documents are checked out at stop-signal-doc/, not at the parent of this
+# repository, although a working clone puts this repository at their code/.
+# Checking them out over the workspace root would replace this file on disk with
+# that repository's copy of it, and claude-code-action refuses to run when this
+# file differs from the copy on the default branch. The prompt translates the
+# paths instead.
+#
+# Repository secrets this needs (Settings -> Secrets and variables -> Actions):
+#   CLAUDE_CODE_OAUTH_TOKEN       the Claude Code subscription token
+#   STOP_SIGNAL_CROSS_REPO_TOKEN  a fine-grained personal access token with
+#                                 Contents: read on nomadwiz/stop-signal and
+#                                 nomadwiz/stop-signal-doc. Both repositories are
+#                                 private, so the default GITHUB_TOKEN cannot read
+#                                 the other one.
+
+name: Claude Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+
+permissions:
+  contents: write # merge a clean pull request, and update one that is behind
+  pull-requests: write # submit a review, and dismiss the previous one
+  issues: read
+  id-token: write
+
+# A second push while a review is running cancels the first, so two reviews never
+# race onto one pull request.
+concurrency:
+  group: review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  claude-review:
+    # A draft is not reviewed. ready_for_review is already a trigger, so nothing
+    # is lost: the review runs the moment the draft flag comes off.
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the build
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the reviewer reads history; depth 1 has none
+
+      # The documents' README.md pairs them with a commit in this repository, and
+      # a document may assert other SHAs in it, so the documents come with their
+      # full history too.
+      - name: Check out the documents
+        uses: actions/checkout@v4
+        with:
+          repository: nomadwiz/stop-signal-doc
+          ref: master
+          path: stop-signal-doc
+          token: ${{ secrets.STOP_SIGNAL_CROSS_REPO_TOKEN }}
+          fetch-depth: 0
+
+      # A CHANGES_REQUESTED review stays in force across every later push. A
+      # COMMENT review does not clear it, and GITHUB_TOKEN is forbidden from
+      # APPROVE, which is the one event that would. Without this step the first
+      # run that finds a nit blocks the pull request until somebody dismisses it
+      # by hand, and the reviewer becomes something people work around.
+      - name: Dismiss the previous review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh api "repos/$REPO/pulls/$PR/reviews" --paginate \
+            --jq '.[] | select((.user.login == "claude[bot]" or .user.login == "github-actions[bot]") and .state == "CHANGES_REQUESTED") | .id' \
+          | while read -r id; do
+              gh api -X PUT "repos/$REPO/pulls/$PR/reviews/$id/dismissals" \
+                -f message='Superseded by a newer review.' -f event=DISMISS
+            done
+
+      # The agent-skills plugin's manifest names a github source, and the plugin
+      # installer clones that over SSH, which a runner has no key for. Ponytail is
+      # unaffected: its manifest declares source "./", so it installs from the
+      # marketplace clone already on disk and never fetches again. The rewrite is
+      # safe because the clone is anonymous and the repository is public — the
+      # extraheader actions/checkout leaves behind is per-repository and does not
+      # reach the plugin cache.
+      - name: Let the plugin installer clone over HTTPS
+        run: git config --global url."https://github.com/".insteadOf "git@github.com:"
+
+      # Record when the review starts, so the guard below can tell this run's
+      # verdict from one an earlier run left behind.
+      - name: Note the start time
+        run: echo "REVIEW_SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+
+      - name: Review
+        uses: anthropics/claude-code-action@v1
+        env:
+          # Passed for the read-only gh calls. The verdict itself is posted by
+          # claude[bot]: the action supplies its own app token to Claude and this
+          # value does not win. The dismissal step matches both logins for that
+          # reason — get it wrong and a request-changes review never clears.
+          GH_TOKEN: ${{ github.token }}
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          plugin_marketplaces: |
+            https://github.com/addyosmani/agent-skills.git
+            https://github.com/DietrichGebert/ponytail.git
+          plugins: |
+            agent-skills@addy-agent-skills
+            ponytail@ponytail
+          claude_args: >-
+            --model claude-opus-5-5 --effort high
+            --allowedTools "Read,Grep,Glob,Write,Task,Skill,SlashCommand,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(jq:*)"
+          prompt: |
+            Review pull request #${{ github.event.pull_request.number }} of ${{ github.repository }}, the StopSignal build. The working directory is that repository. The documents repository, nomadwiz/stop-signal-doc, is checked out at `stop-signal-doc/` on its `master` branch with full history.
+
+            ## Read the contract first
+
+            Read `stop-signal-doc/CLAUDE.md`, then `stop-signal-doc/README.md` and `stop-signal-doc/doc/design/ownership.md`. This repository has no `CLAUDE.md` of its own: its `README.md` says the build treats `doc/design/` as its source of truth.
+
+            Paths in the documents are relative to their own repository, which a working clone keeps one level above this one. Here, `doc/design/product.md` is `stop-signal-doc/doc/design/product.md`, and the documents' `code/` is the working directory. Translate every such path; none of them is broken.
+
+            Enforce what those files say. Do not restate them, do not reinterpret them, and do not apply a rule they do not contain. Where `CLAUDE.md` and the file it points at disagree, its own precedence ladder decides.
+
+            Two records decide most reviews here, so check them on every change:
+
+            - **Scope.** `stop-signal-doc/doc/design/decisions/adr/013-m2-build-scope.md` fixes the build as the three rows of `doc/plan/m1/report-m1.md` §1.3, built to `doc/output/m1-revised.md`'s detail. The third row is designed and deliberately not built: S6, S3's lead-time rule and S12's coarse tier. Building one of those, or moving an item between rows without the roadblock ADR, numbered from 015, that ADR-013 requires, is the defect to catch first.
+            - **Libraries.** `stop-signal-doc/doc/design/decisions/adr/015-service-side-libraries.md` names what the service is built on. A dependency it does not name, or a replacement for one it does, is a finding until an ADR records it.
+
+            The project's code rules live in no repository, so they are stated here. Enforce them as written:
+
+            - DRY, applied lazily: extract on the third repetition, not the second.
+            - YAGNI: build for the current need, not an imagined future one.
+            - Prefer the plain solution over the clever one.
+            - Any script kept longer than a day gets a usage comment at the top.
+            - Anything relied on gets a test.
+
+            ## Run both reviewers over the diff
+
+            - `/agent-skills:review` for correctness, architecture and security.
+            - `/ponytail:ponytail-review` for what can be deleted.
+
+            ## Check the two repositories for drift
+
+            The documents say what StopSignal should be. The code says what it is. Report a mismatch, name both sides, and resolve neither — which side moves is the author's decision, not yours. The code is the authority on what exists, the documents on what should exist.
+
+            **Here the expensive direction is the change.** A document going stale about correct code is cheap and the documents repository's own reviewer catches it. A change departing from a document that was not updated with it is what this review is for. Where the diff makes a document wrong, say which document and which line.
+
+            **Only a present-tense claim can drift.** A statement inside a dated historical record is correct as written and must not be flagged: a commit message describing what was true then, anything under `stop-signal-doc/doc/plan/`, which is never revised, and an ADR describing what was true when it was written. A design the build has not reached yet is not drift either.
+
+            Three checks, cheapest first:
+
+            1. Where the diff adds a dependency to a `package.json`, compare it with ADR-015.
+            2. Where the diff adds, removes or renames an endpoint, a message, a field or a file the documents name, say which document now needs changing.
+            3. Any present-tense claim in `stop-signal-doc/doc/` about what the build does, against what this diff makes it do.
+
+            ## Post exactly one review
+
+            One API call carries the verdict and every inline comment together. Write the JSON to a file, confirm it parses with `jq . <file>`, then post it:
+
+            ```
+            gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews --input <file>
+            ```
+
+            The file:
+
+            ```json
+            {
+              "event": "REQUEST_CHANGES",
+              "body": "<the summary>",
+              "comments": [
+                {"path": "<path>", "line": <line>, "side": "RIGHT", "body": "<the finding>"}
+              ]
+            }
+            ```
+
+            Use `"event": "COMMENT"` with an empty `comments` array when you found nothing. Never `"APPROVE"`: the token is forbidden from it and the call fails.
+
+            **A clean verdict merges the pull request.** A `COMMENT` carrying a summary and no inline comments is squash-merged by the step that runs after you, without anybody looking at it first. So post one only where you would merge the change yourself, and use `REQUEST_CHANGES` wherever you would want a person to look — including any change to scope or libraries that no ADR records.
+
+            Every `line` must be one the diff touches, or GitHub rejects the whole review with a 422. `side` is `"RIGHT"` for an added or changed line and `"LEFT"` for a removed one. A finding about a file the diff does not touch goes in the body, not in `comments`.
+
+            **Post nothing separately — one review is the deliverable.** Comments without a verdict leave the pull request unblocked with findings scattered through it, and a verdict without its comments makes the author hunt for the lines. A run that posts comments and no verdict fails the job.
+
+            Open the body with one sentence saying whether anything blocks. Then group the findings under `### Correctness`, `### Drift against the documents`, `### Project rules` and `### What can be deleted`, leaving out any group that is empty. Quote the rule or the document you measured against, so the author can check your reading. A finding with no file and line is not a finding.
+
+            Report only what you can point at. Where something cannot be determined from this code and those documents, say so and stop. Never pick the most plausible reading and carry on.
+
+      # A run that posted inline comments and no verdict still reported success,
+      # and the pull request then sat unblocked with findings scattered over it.
+      # Three silent successes in this workflow's first day earned this guard.
+      - name: Fail if no verdict was posted
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          n=$(gh api "repos/$REPO/pulls/$PR/reviews" --paginate \
+            --jq "[.[] | select(.submitted_at > \"$REVIEW_SINCE\") | select((.body|length) > 0)] | length")
+          [ "$n" -gt 0 ] || { echo "The review step posted no verdict for this run." >&2; exit 1; }
+          echo "Verdict posted."
+
+      # Claude merges what it found clean, so a pull request nothing is blocking
+      # does not wait on somebody noticing that nothing is blocking it.
+      #
+      # Clean means all three: this run posted a verdict, the verdict is a plain
+      # COMMENT rather than CHANGES_REQUESTED, and it carries no inline findings.
+      # All three are needed, because COMMENTED alone does not mean clean — the
+      # runs of 01-10-2026 that posted comments and no verdict landed as COMMENTED
+      # too, with an empty body and one inline comment each (nomadwiz/kete-doc#27,
+      # the infs803-a1 repository this workflow was copied from).
+      #
+      # The decision is deliberately not Claude's. The diff under review is
+      # untrusted input, and a model holding the merge button is a model a diff can
+      # argue into merging. This step reads the verdict already posted and the
+      # API's own counts, so nothing inside a pull request can move it.
+      - name: Merge what the review found clean
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          BASE: ${{ github.event.pull_request.base.ref }}
+          HEAD: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+
+          id=$(gh api "repos/$REPO/pulls/$PR/reviews" --paginate \
+            --jq "[.[] | select(.submitted_at > \"$REVIEW_SINCE\")
+                       | select(.state == \"COMMENTED\")
+                       | select((.body|length) > 0)] | last | .id // empty")
+          if [ -z "$id" ]; then
+            echo "This run requested changes, or posted no clean verdict. Not merging."
+            exit 0
+          fi
+
+          findings=$(gh api "repos/$REPO/pulls/$PR/reviews/$id/comments" --jq 'length')
+          if [ "$findings" -ne 0 ]; then
+            echo "The verdict carries $findings inline findings. Not merging."
+            exit 0
+          fi
+
+          # A branch behind its base was reviewed against something that is no
+          # longer what it will become, which is nomadwiz/kete#302's lesson. Update
+          # it and stop: the update pushes, that push is another synchronize event,
+          # and the run it fires reviews the merged result and merges it.
+          #
+          # The update merges $BASE into the branch. It is never a rebase, because
+          # a rebase of a pushed branch needs a force push to land, and that
+          # rewrites the commits the review just read.
+          behind=$(gh api "repos/$REPO/compare/$BASE...$HEAD" --jq '.behind_by')
+          if [ "$behind" -gt 0 ]; then
+            if gh api -X PUT "repos/$REPO/pulls/$PR/update-branch" --silent 2>/dev/null; then
+              echo "Branch was $behind commits behind $BASE. Updated; the next run merges it."
+            else
+              echo "Branch is $behind commits behind $BASE and will not update — a conflict. Left open."
+            fi
+            exit 0
+          fi
+
+          # Squashed, so one pull request is one commit on $BASE, which is the
+          # documents' CLAUDE.md's "one commit per coherent change". GitHub writes
+          # a Co-authored-by trailer for every author in the squashed range, so no
+          # authorship is lost.
+          if gh api -X PUT "repos/$REPO/pulls/$PR/merge" -f merge_method=squash --silent; then
+            echo "Merged #$PR."
+          else
+            echo "Merge refused. Left open for a person."
+          fi
