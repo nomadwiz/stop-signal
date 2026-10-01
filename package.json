@@ -1,5 +1,4 @@
 {
-  "name": "stopsignal",
   "private": true,
   "type": "module",
   "workspaces": [
