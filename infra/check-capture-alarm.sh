@@ -30,22 +30,7 @@ pass "$TOPIC has a confirmed email subscription"
 [ "$(state)" = OK ] || fail "$ALARM is $(state), not OK; rerun once capture has published heartbeats for a few minutes"
 pass "$ALARM is OK"
 
-ID=$(aws ec2 describe-instances --filters Name=tag:Name,Values=$NAME Name=instance-state-name,Values=running \
-  --query 'Reservations[].Instances[].InstanceId' --output text)
-[ -n "$ID" ] || fail "no running instance tagged $NAME"
-
-# As in infra/check-capture-host.sh: runs a shell command on the instance through Systems Manager,
-# prints its output and errors, and fails if the command fails.
-on_host() {
-  local cmd status
-  cmd=$(aws ssm send-command --instance-ids "$ID" --document-name AWS-RunShellScript \
-    --parameters "$(jq -n --arg c "$1" '{commands: [$c]}')" --query Command.CommandId --output text)
-  aws ssm wait command-executed --command-id "$cmd" --instance-id "$ID" 2>/dev/null || true
-  status=$(aws ssm get-command-invocation --command-id "$cmd" --instance-id "$ID" --query Status --output text)
-  aws ssm get-command-invocation --command-id "$cmd" --instance-id "$ID" \
-    --query '[StandardOutputContent, StandardErrorContent]' --output text
-  [ "$status" = Success ]
-}
+. "$(dirname "$0")/on-host.sh"
 
 # Seconds from $2 until the alarm reaches state $1, polled every 10 s; fails after $3 seconds.
 wait_for() {

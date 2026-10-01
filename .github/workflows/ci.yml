@@ -1,13 +1,16 @@
-# Runs the suite and the replay check on every push, as QR9 and ADR-004 require.
-# A status check required on master names this job by its id, `suite`, so
-# renaming the job drops the requirement silently.
+# Runs the suite and the replay check on every push, as QR9 and ADR-004 require, then deploys
+# feed-capture to its host from master (ADR-016). A status check required on master names the
+# suite job by its id, `suite`, so renaming the job drops the requirement silently.
 #
-# A push made with GITHUB_TOKEN starts no workflow, so the review workflow's
-# squash merges are not checked here.
+# A push made with GITHUB_TOKEN starts no workflow, so the review workflow's squash merges start
+# no push run. The review dispatches this workflow on master after each merge instead:
+# workflow_dispatch is one of the two events that token can still start.
 
 name: CI
 
-on: push
+on:
+  push:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -16,7 +19,7 @@ jobs:
   suite:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # The newest Node 22, not the engines range or the runner's cached 22.x:
       # ADR-015 decision 5 types the code against the newest 22.x declarations
@@ -32,3 +35,43 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run replay:check
+
+  # Uploads capture.ts to S3 and has the host put it in place, restarting capture only if it changed
+  # (infra/capture-update.sh). It signs in as the IAM user stopsignal-deploy, which may do nothing else
+  # (infra/deploy-user.sh). Its key is a secret of the deploy environment, whose branch policy admits master
+  # alone, so a workflow run on any other branch cannot read it. The account's AWS-managed service control
+  # policy denies the OpenID Connect provider a keyless sign-in would need.
+  deploy:
+    needs: suite
+    if: github.ref == 'refs/heads/master'
+    environment: deploy
+    runs-on: ubuntu-latest
+    # One deploy at a time, and a newer one replaces any still waiting. That orders runs by when they were
+    # queued, not by commit, so the step below also skips any run whose commit is no longer master's head.
+    concurrency: deploy
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      # The key is set on this step alone. actions/checkout runs before it, and a step cannot read a later
+      # step's env, so checkout never holds the key.
+      - name: Deploy capture.ts
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ap-southeast-2
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          head=$(gh api "repos/$GITHUB_REPOSITORY/commits/master" --jq .sha)
+          if [ "$head" != "$GITHUB_SHA" ]; then
+            echo "master has moved on to $head, whose own run deploys it; not deploying $GITHUB_SHA."
+            exit 0
+          fi
+          bucket=stopsignal-archive-995583236543
+          aws s3 cp packages/feed-capture/src/capture.ts "s3://$bucket/deploy/capture.ts" --only-show-errors
+          . infra/on-host.sh
+          on_host "$(sed "s/BUCKET/$bucket/g" infra/capture-update.sh)"
