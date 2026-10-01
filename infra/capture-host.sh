@@ -9,10 +9,10 @@
 #     aws ssm put-parameter --name /stopsignal/at-key --type SecureString --overwrite --profile stopsignal \
 #       --value "$(pbpaste | tr -d '[:space:]')"
 #
-#   Safe to re-run: it creates only what is missing, refreshes the role policy and the copy of capture.ts
-#   in S3 (the host reads it on first boot only; #87 deploys later changes), and launches an instance
-#   only if none exists, stopped or running.
-#   Then run infra/check-capture-host.sh.
+#   Safe to re-run: it creates only what is missing, refreshes the role policy and the copies of capture.ts
+#   and capture-heartbeat.sh in S3 (the host reads them on first boot only; #87 deploys later changes),
+#   and launches an instance only if none exists, stopped or running.
+#   Then run infra/check-capture-host.sh, and infra/capture-alarm.sh for the alarm.
 set -euo pipefail
 export AWS_PROFILE=stopsignal AWS_REGION=ap-southeast-2
 ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
@@ -39,6 +39,7 @@ aws iam put-role-policy --role-name "$NAME" --policy-name capture \
   --policy-document "$(sed "s/BUCKET/$BUCKET/g; s/ACCOUNT/$ACCOUNT/g" "$HERE/capture-role-policy.json")"
 
 aws s3 cp "$HERE/../packages/feed-capture/src/capture.ts" "s3://$BUCKET/deploy/capture.ts" --only-show-errors
+aws s3 cp "$HERE/capture-heartbeat.sh" "s3://$BUCKET/deploy/capture-heartbeat.sh" --only-show-errors
 
 SG=$(aws ec2 describe-security-groups --filters Name=group-name,Values="$NAME" --query 'SecurityGroups[0].GroupId' --output text)
 if [ "$SG" = None ]; then
