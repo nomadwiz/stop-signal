@@ -11,6 +11,13 @@
       "Condition": { "StringLike": { "s3:prefix": "raw/*" } }
     },
     { "Sid": "AtKey", "Effect": "Allow", "Action": "ssm:GetParameter", "Resource": "arn:aws:ssm:ap-southeast-2:ACCOUNT:parameter/stopsignal/at-key" },
+    {
+      "Sid": "CaptureHeartbeat",
+      "Effect": "Allow",
+      "Action": "cloudwatch:PutMetricData",
+      "Resource": "*",
+      "Condition": { "StringEquals": { "cloudwatch:namespace": "StopSignal/Capture" } }
+    },
     { "Sid": "AgentHeartbeat", "Effect": "Allow", "Action": "ssm:UpdateInstanceInformation", "Resource": "*" },
     {
       "Sid": "AgentChannels",

@@ -79,3 +79,6 @@ EOF
 
 systemctl daemon-reload
 systemctl enable --now stopsignal-capture.service stopsignal-sync.timer
+
+aws s3 cp s3://BUCKET/deploy/capture-heartbeat.sh /opt/stopsignal/capture-heartbeat.sh
+bash /opt/stopsignal/capture-heartbeat.sh
