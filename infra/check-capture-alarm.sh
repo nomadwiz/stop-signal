@@ -82,19 +82,16 @@ trap - EXIT
 restarted=$(date +%s)
 pass "capture restarted after a gap of $((restarted - stopped))s"
 
-# The state proves the alarm fired; the Action history item proves it published to the topic.
-# ponytail: matches "successfully" loosely, as AWS documents no example of an Action item's summary.
-for _ in 1 2 3 4 5 6; do
-  summary=$(aws cloudwatch describe-alarm-history --alarm-name "$ALARM" --history-item-type Action --start-date "$since" \
-    --max-items 1 --query 'AlarmHistoryItems[0].HistorySummary' --output text)
-  echo "$summary" | grep -qi successfully && break
-  sleep 10
-done
-echo "$summary" | grep -qi successfully || fail "$ALARM reached ALARM but its action did not succeed: $summary"
-pass "$ALARM executed its action: $summary"
-
 ok_after=$(wait_for OK "$restarted" 600) || fail "$ALARM did not return to OK within 10 minutes of the restart"
 pass "$ALARM returned to OK ${ok_after}s after the restart"
+
+# The state proves the alarm fired; its Action history item, read after OK so it has long been written,
+# proves it published to the topic. The alarm has no OK action, so the newest one is ALARM's.
+# ponytail: matches "successfully" loosely, as AWS documents no example of an Action item's summary.
+summary=$(aws cloudwatch describe-alarm-history --alarm-name "$ALARM" --history-item-type Action --start-date "$since" \
+  --max-items 1 --query 'AlarmHistoryItems[0].HistorySummary' --output text)
+echo "$summary" | grep -qi successfully || fail "$ALARM reached ALARM but its action did not succeed: $summary"
+pass "$ALARM executed its action: $summary"
 
 [ "$alarm_after" -le 300 ] || fail "ALARM came ${alarm_after}s after the stop, over the five minutes #11 accepts"
 pass "ALARM came ${alarm_after}s after the stop, within five minutes; confirm the email arrived"
