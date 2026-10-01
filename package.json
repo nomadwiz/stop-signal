@@ -10,7 +10,8 @@
   "scripts": {
     "test": "vitest run",
     "lint": "eslint .",
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "replay:check": "echo 'replay:check replays nothing until #16 gives it fixtures.'"
   },
   "devDependencies": {
     "@types/node": "^22.20.4",
