@@ -35,6 +35,7 @@ permissions:
   issues: write # close the issues a merged pull request names
   checks: read # wait for the checks master requires before merging
   statuses: read # the same, for a check reported as a commit status
+  actions: read # gh pr checks reads the workflow run behind each check
   id-token: write
 
 # A second push while a review is running cancels the first, so two reviews never
