@@ -1,0 +1,5 @@
+{
+  "name": "@stopsignal/hail-core",
+  "private": true,
+  "type": "module"
+}

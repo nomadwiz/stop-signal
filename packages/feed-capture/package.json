@@ -1,0 +1,5 @@
+{
+  "name": "@stopsignal/feed-capture",
+  "private": true,
+  "type": "module"
+}
