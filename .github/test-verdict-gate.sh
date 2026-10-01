@@ -25,12 +25,14 @@ POST=$(block "Check the verdict and post it"); MERGE=$(block "Merge what the rev
 # $LIST (the pull request's reviews), $FILES (the changed files), $BEHIND (how
 # far behind the base) and $REFS (the issues the pull request closes, one
 # "owner/repo number" per line). $FAIL_CLOSE makes closing that issue number
-# fail, $FAIL_LOOKUP makes the issue lookup fail, and $FAIL_CHECKS makes the
-# wait for the base branch's required checks fail.
+# fail, $FAIL_LOOKUP makes the issue lookup fail, $FAIL_CHECKS makes the wait
+# for the base branch's required checks fail, and $FAIL_DISPATCH makes starting
+# CI fail.
 gh() { case $1 in
     pr) if [ "$2" = checks ]; then [ -z "${FAIL_CHECKS:-}" ]; return; fi
         [ -n "${FAIL_LOOKUP:-}" ] && return 1; printf '%s' "${REFS:-}"; return;;
     issue) [ "${FAIL_CLOSE:-}" = "$3" ] && return 1; echo "close $5#$3" >> "$OUT/log"; return;;
+    workflow) echo "$*" >> "$OUT/log"; [ -z "${FAIL_DISPATCH:-}" ]; return;;
   esac
   local q= path= input= args="$*"; while [ $# -gt 0 ]; do case $1 in --jq) q=$2; shift 2;; --input) input=$2; shift 2;; -X|-f|--repo) shift 2;; api|--paginate|--silent) shift;; *) path=$1; shift;; esac; done
   case $path in
@@ -85,7 +87,7 @@ merge() { export OUT; OUT=$(mktemp -d); : > "$OUT/log"; export CLEAN=$1 FILES=$2
   bash -c "$MERGE" >/dev/null 2>&1; echo $? > "$OUT/rc"; }
 
 merge true src/x.ts
-check "merge: a clean verdict merges, pinned to the reviewed commit" '[ "$(tr "\n" " " < $OUT/log)" = "merge pinned " ]'
+check "merge: a clean verdict merges, pinned to the reviewed commit, then starts CI on the base" '[ "$(tr "\n" " " < $OUT/log)" = "merge pinned workflow run ci.yml -R o/r --ref master " ]'
 merge false src/x.ts
 check "merge: a verdict that is not clean holds" '[ ! -s $OUT/log ]'
 merge "" src/x.ts
@@ -98,20 +100,24 @@ check "merge: a clean branch that is behind is left for Update branch, not updat
 unset BEHIND
 export REFS=$'o/r 5\nnomadwiz/stop-signal 7'
 merge true src/x.ts
-check "merge: after merging, closes every issue the pull request names" '[ "$(tr "\n" " " < $OUT/log)" = "merge pinned close o/r#5 close nomadwiz/stop-signal#7 " ] && [ "$(cat $OUT/rc)" = 0 ]'
+check "merge: after merging, closes every issue the pull request names" '[ "$(tr "\n" " " < $OUT/log)" = "merge pinned close o/r#5 close nomadwiz/stop-signal#7 workflow run ci.yml -R o/r --ref master " ] && [ "$(cat $OUT/rc)" = 0 ]'
 export FAIL_CLOSE=5
 merge true src/x.ts
-check "merge: an issue that will not close is skipped, and the rest still close" '[ "$(tr "\n" " " < $OUT/log)" = "merge pinned close nomadwiz/stop-signal#7 " ] && [ "$(cat $OUT/rc)" = 0 ]'
+check "merge: an issue that will not close is skipped, and the rest still close" '[ "$(tr "\n" " " < $OUT/log)" = "merge pinned close nomadwiz/stop-signal#7 workflow run ci.yml -R o/r --ref master " ] && [ "$(cat $OUT/rc)" = 0 ]'
 unset FAIL_CLOSE
 merge false src/x.ts
 check "merge: nothing is closed when nothing merges" '[ ! -s $OUT/log ]'
 unset REFS
 export FAIL_LOOKUP=1
 merge true src/x.ts
-check "merge: a failed issue lookup still leaves the merge done and the job green" '[ "$(tr "\n" " " < $OUT/log)" = "merge pinned " ] && [ "$(cat $OUT/rc)" = 0 ]'
+check "merge: a failed issue lookup still leaves the merge done and the job green" '[ "$(tr "\n" " " < $OUT/log)" = "merge pinned workflow run ci.yml -R o/r --ref master " ] && [ "$(cat $OUT/rc)" = 0 ]'
 unset FAIL_LOOKUP
 export FAIL_CHECKS=1
 merge true src/x.ts
 check "merge: a required check that fails holds the merge" '[ ! -s $OUT/log ] && [ "$(cat $OUT/rc)" = 0 ]'
 unset FAIL_CHECKS
+export FAIL_DISPATCH=1
+merge true src/x.ts
+check "merge: CI that will not start fails the job, after the merge" '[ "$(tr "\n" " " < $OUT/log)" = "merge pinned workflow run ci.yml -R o/r --ref master " ] && [ "$(cat $OUT/rc)" != 0 ]'
+unset FAIL_DISPATCH
 exit $fail

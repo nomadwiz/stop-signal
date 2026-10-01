@@ -292,7 +292,7 @@ jobs:
       issues: write # close those issues: GitHub does not, for this merge
       checks: read # wait for the checks master requires before merging
       statuses: read # the same, for a check reported as a commit status
-      actions: read # gh pr checks reads the workflow run behind each check
+      actions: write # gh pr checks reads each check's workflow run; the last step starts CI
 
     steps:
       - name: Merge what the review found clean
@@ -374,3 +374,8 @@ jobs:
             gh issue close "$n" -R "$repo" --comment "Closed by #$PR, merged by the automated review." \
               || echo "Could not close $repo#$n. Close it by hand."
           done <<<"$refs"
+
+          # The merge above starts no push run, so CI, and on master its deploy, is dispatched here
+          # (ADR-016 decision 1). Last and unguarded: if it fails, the job goes red after the merge and
+          # the issues are done, and CI can be started from the Actions tab.
+          gh workflow run ci.yml -R "$REPO" --ref "$BASE"
