@@ -1,0 +1,16 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    { "Sid": "Upload", "Effect": "Allow", "Action": "s3:PutObject", "Resource": "arn:aws:s3:::BUCKET/deploy/capture.ts" },
+    { "Sid": "FindHost", "Effect": "Allow", "Action": "ec2:DescribeInstances", "Resource": "*" },
+    {
+      "Sid": "RunOnCaptureHost",
+      "Effect": "Allow",
+      "Action": "ssm:SendCommand",
+      "Resource": "arn:aws:ec2:ap-southeast-2:ACCOUNT:instance/*",
+      "Condition": { "StringEquals": { "ssm:resourceTag/Name": "stopsignal-capture" } }
+    },
+    { "Sid": "ShellDocument", "Effect": "Allow", "Action": "ssm:SendCommand", "Resource": "arn:aws:ssm:ap-southeast-2::document/AWS-RunShellScript" },
+    { "Sid": "ReadResult", "Effect": "Allow", "Action": "ssm:GetCommandInvocation", "Resource": "*" }
+  ]
+}
