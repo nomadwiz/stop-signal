@@ -3,7 +3,7 @@
 # renaming the job drops the requirement silently.
 #
 # A push made with GITHUB_TOKEN starts no workflow, so the review workflow's
-# squash merges and branch updates are not checked here.
+# squash merges are not checked here.
 
 name: CI
 
