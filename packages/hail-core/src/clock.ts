@@ -2,3 +2,4 @@
 export interface Clock {
   now(): number;
 }
+export const leak = Date.now();
