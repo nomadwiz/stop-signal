@@ -34,7 +34,7 @@ permissions:
   pull-requests: write # submit a review, and dismiss the previous one
   issues: write # close the issues a merged pull request names
   checks: read # wait for the checks master requires before merging
-  statuses: read
+  statuses: read # the same, for a check reported as a commit status
   id-token: write
 
 # A second push while a review is running cancels the first, so two reviews never
@@ -242,6 +242,7 @@ jobs:
       # argue into merging. This step reads the verdict already posted and the
       # API's own counts, so nothing inside a pull request can move it.
       - name: Merge what the review found clean
+        timeout-minutes: 15 # bounds the wait for CI below
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
@@ -292,7 +293,7 @@ jobs:
           # no check is required, so this step merges nothing until master
           # requires one.
           if ! gh pr checks "$PR" --repo "$REPO" --required --watch --fail-fast; then
-            echo "A required check failed or never reported. Not merging."
+            echo "::warning::A required check failed or never reported. Not merging."
             exit 0
           fi
 
