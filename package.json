@@ -5,12 +5,12 @@
     "packages/*"
   ],
   "engines": {
-    "node": "22.x"
+    "node": "^22.13.0"
   },
   "scripts": {
     "test": "vitest run",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
