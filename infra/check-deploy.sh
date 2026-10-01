@@ -18,14 +18,16 @@ keys=$(aws iam list-access-keys --user-name "$NAME" --query "length(AccessKeyMet
 [ "$keys" = 1 ] || fail "$NAME has $keys active access keys, not 1; run infra/deploy-user.sh --rotate-key"
 pass "$NAME exists with one active access key"
 
-# Its grants are exactly the policy file: one inline policy, equal to the file once rendered, and nothing attached.
+# Its grants are exactly the policy file: one inline policy, equal to the file once rendered, nothing attached
+# and no group, since a group's policies would reach it too.
 ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
 want=$(sed "s/BUCKET/stopsignal-archive-$ACCOUNT/g; s/ACCOUNT/$ACCOUNT/g" "$(dirname "$0")/deploy-user-policy.json" | jq -S .)
 [ "$(aws iam list-user-policies --user-name "$NAME" --query PolicyNames --output text)" = deploy ] \
   && [ -z "$(aws iam list-attached-user-policies --user-name "$NAME" --query AttachedPolicies --output text)" ] \
+  && [ -z "$(aws iam list-groups-for-user --user-name "$NAME" --query Groups --output text)" ] \
   && [ "$(aws iam get-user-policy --user-name "$NAME" --policy-name deploy --query PolicyDocument --output json | jq -S .)" = "$want" ] \
-  || fail "$NAME's grants are not exactly infra/deploy-user-policy.json; run infra/deploy-user.sh"
-pass "$NAME holds only infra/deploy-user-policy.json"
+  || fail "$NAME's grants are not exactly infra/deploy-user-policy.json: infra/deploy-user.sh rewrites the inline policy; remove any other policy or group by hand"
+pass "$NAME holds only infra/deploy-user-policy.json and is in no group"
 
 # Names only, as gh cannot read a value: the key's two halves and no other secret named for AWS.
 aws_secrets=$(gh secret list -R "$REPO" --json name --jq '[.[].name | select(test("aws"; "i"))] | sort | join(" ")')
