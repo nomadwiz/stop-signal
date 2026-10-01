@@ -4,9 +4,10 @@
 #
 # Usage: infra/check-capture-alarm.sh
 #   Run from your machine with the AWS CLI profile `stopsignal`, after infra/capture-alarm.sh, once the
-#   email subscription is confirmed and the alarm is OK. It stops capture until the alarm fires, at most
-#   15 minutes, and those polls are lost for good. It restarts capture on every exit, Ctrl-C included.
-#   It reads the alarm's state, not the inbox: confirm by hand that the alarm email arrived.
+#   email subscription is confirmed and the alarm is OK. It stops capture until the alarm fires, about 3–5
+#   minutes and never over 330 s, and those polls are lost for good. It restarts capture on every exit,
+#   Ctrl-C included, and a timer armed on the host restarts it after 16 minutes if this machine sleeps or disconnects.
+#   It reads the alarm's state and history, not the inbox: confirm by hand that the alarm email arrived.
 set -euo pipefail
 export AWS_PROFILE=stopsignal AWS_REGION=ap-southeast-2
 NAME=stopsignal-capture
@@ -55,21 +56,38 @@ wait_for() {
   return 1
 }
 
+# The rescue timer stays loaded after it fires, so every start and every arming clears it first,
+# or a rerun's systemd-run would fail on a unit that already exists.
+CLEAR='systemctl stop stopsignal-capture-rescue.timer 2>/dev/null;'
+START="$CLEAR systemctl start stopsignal-capture"
 restart() {
-  on_host 'systemctl start stopsignal-capture' >/dev/null \
+  on_host "$START" >/dev/null \
     || echo "FAIL: capture is still stopped on $ID; start it now: systemctl start stopsignal-capture" >&2
 }
 # Set before the stop, so even a stop that half-succeeds is undone. Ctrl-C exits, which runs it.
 trap restart EXIT
 trap 'exit 1' INT TERM
 
-on_host 'systemctl stop stopsignal-capture' >/dev/null || fail "cannot stop capture"
+# The rescue is armed in the same command as the stop, so capture never stops without it.
+on_host "$CLEAR systemd-run --collect --on-active=16min --unit=stopsignal-capture-rescue /usr/bin/systemctl start stopsignal-capture \
+  && systemctl stop stopsignal-capture" >/dev/null || fail "cannot arm the rescue and stop capture"
 stopped=$(date +%s)
+since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 echo "capture stopped; waiting for ALARM"
-alarm_after=$(wait_for ALARM "$stopped" 900) || fail "$ALARM did not reach ALARM within 15 minutes of the stop"
+alarm_after=$(wait_for ALARM "$stopped" 330) || fail "$ALARM did not reach ALARM within 330 s of the stop"
 echo "ALARM ${alarm_after}s after the stop"
+# The state proves the alarm fired; the Action history item proves it published to the topic.
+# ponytail: matches "successfully" loosely, as AWS documents no example of an Action item's summary.
+for _ in 1 2 3 4 5 6; do
+  summary=$(aws cloudwatch describe-alarm-history --alarm-name "$ALARM" --history-item-type Action --start-date "$since" \
+    --max-items 1 --query 'AlarmHistoryItems[0].HistorySummary' --output text)
+  echo "$summary" | grep -qi successfully && break
+  sleep 10
+done
+echo "$summary" | grep -qi successfully || fail "$ALARM reached ALARM but its action did not succeed: $summary"
+pass "$ALARM executed its action: $summary"
 
-on_host 'systemctl start stopsignal-capture' >/dev/null || fail "cannot restart capture"
+on_host "$START" >/dev/null || fail "cannot restart capture"
 trap - EXIT
 restarted=$(date +%s)
 pass "capture restarted after a gap of $((restarted - stopped))s"
