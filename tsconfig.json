@@ -5,6 +5,10 @@
     "moduleResolution": "NodeNext",
     "strict": true,
     "noEmit": true,
+    // Node runs the .ts files directly by stripping types, which needs `.ts` in relative
+    // imports and rejects syntax that emits code, such as enums.
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
     "skipLibCheck": true
   },
   "include": ["packages/*/src", "test"]
