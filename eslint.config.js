@@ -1,5 +1,5 @@
 import { defineConfig } from 'eslint/config';
-import tseslint from 'typescript-eslint';
+import tsParser from '@typescript-eslint/parser';
 
 // ADR-002 rule 1: hail-core never reads the wall clock, sleeps or sets a timeout.
 // Time reaches it only through the injected Clock port, so a replay is byte-identical.
@@ -8,7 +8,7 @@ const useClock = 'hail-core reads time only through the injected Clock port (ADR
 const banned = (object, ...properties) => properties.map((property) => ({ object, property, message: useClock }));
 
 export default defineConfig(
-  { files: ['**/*.ts'], languageOptions: { parser: tseslint.parser } },
+  { files: ['**/*.ts'], languageOptions: { parser: tsParser } },
   {
     files: ['packages/hail-core/**'],
     rules: {
