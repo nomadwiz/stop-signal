@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Checks infra/deploy-user.sh's handling of the access key: a key is made only when there is no active one
-# or on --rotate-key, it reaches the two secrets and never the output, not even under bash -x, inactive keys
+# or on --rotate-key, it reaches the two secrets of the deploy environment and never the output, not even under bash -x, inactive keys
 # make room before it and the old key is deleted only after both secrets are set, and a failed store deletes
 # the new key and points AWS_ACCESS_KEY_ID back at the old one.
 #
@@ -31,6 +31,8 @@ EOF
   cat > "$T/bin/gh" <<'EOF'
 #!/bin/bash
 [ "$3" = "${FAIL_GH:-}" ] && exit 1
+# Only the deploy environment's secrets count: a repository-level set is logged as such and fails.
+[[ " $* " == *" -e deploy "* ]] || { echo "set $3 outside the deploy environment" >> "$T/log"; exit 1; }
 echo "set $3=$(cat)" >> "$T/log"
 EOF
   chmod +x "$T/bin/"*
