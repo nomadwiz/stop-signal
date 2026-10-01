@@ -33,6 +33,8 @@ permissions:
   contents: write # merge a clean pull request, and update one that is behind
   pull-requests: write # submit a review, and dismiss the previous one
   issues: write # close the issues a merged pull request names
+  checks: read # wait for the checks master requires before merging
+  statuses: read # the same, for a check reported as a commit status
   id-token: write
 
 # A second push while a review is running cancels the first, so two reviews never
@@ -240,6 +242,7 @@ jobs:
       # argue into merging. This step reads the verdict already posted and the
       # API's own counts, so nothing inside a pull request can move it.
       - name: Merge what the review found clean
+        timeout-minutes: 15 # bounds the wait for CI below
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
@@ -266,8 +269,10 @@ jobs:
 
           # A branch behind its base was reviewed against something that is no
           # longer what it will become, which is nomadwiz/kete#302's lesson. Update
-          # it and stop: the update pushes, that push is another synchronize event,
-          # and the run it fires reviews the merged result and merges it.
+          # it and stop. GitHub starts no workflow for a push made with
+          # GITHUB_TOKEN, so neither CI nor this review runs on the updated head:
+          # the pull request waits until a person pushes to it, and that push runs
+          # both again.
           #
           # The update merges $BASE into the branch. It is never a rebase, because
           # a rebase of a pushed branch needs a force push to land, and that
@@ -275,10 +280,20 @@ jobs:
           behind=$(gh api "repos/$REPO/compare/$BASE...$HEAD" --jq '.behind_by')
           if [ "$behind" -gt 0 ]; then
             if gh api -X PUT "repos/$REPO/pulls/$PR/update-branch" --silent 2>/dev/null; then
-              echo "Branch was $behind commits behind $BASE. Updated; the next run merges it."
+              echo "Branch was $behind commits behind $BASE. Updated; push to it to run CI and this review again."
             else
               echo "Branch is $behind commits behind $BASE and will not update — a conflict. Left open."
             fi
+            exit 0
+          fi
+
+          # Master requires CI's `suite` check, and a merge GitHub refuses here is
+          # never retried, so wait for it first. --required leaves out this job's
+          # own check, which would otherwise wait on itself. It also exits 1 when
+          # no check is required, so this step merges nothing until master
+          # requires one.
+          if ! gh pr checks "$PR" --repo "$REPO" --required --watch --fail-fast; then
+            echo "::warning::A required check failed or never reported. Not merging."
             exit 0
           fi
 
