@@ -38,17 +38,19 @@ wait_online() {
   return 1
 }
 
-if [ "${1:-}" = reboot ]; then
-  aws ec2 reboot-instances --instance-ids "$ID"
-  echo "rebooted; waiting for the agent and the first poll"
-  sleep 90
-fi
-
 wait_online || fail "Systems Manager cannot reach the instance"
 pass "Systems Manager reaches the instance"
 
-node=$(on_host 'node-22 --version 2>/dev/null || node --version') || fail "node is not installed"
-echo "      node $node"
+if [ "${1:-}" = reboot ]; then
+  # reboot-instances returns before the guest restarts, so compare boot times to prove it did.
+  booted=$(on_host 'uptime -s')
+  aws ec2 reboot-instances --instance-ids "$ID"
+  echo "rebooting; waiting for the agent and the first poll"
+  sleep 90
+  wait_online || fail "Systems Manager cannot reach the instance after the reboot"
+  [ "$(on_host 'uptime -s')" != "$booted" ] || fail "the instance did not reboot"
+  pass "the instance rebooted"
+fi
 
 on_host 'systemctl is-active stopsignal-capture' >/dev/null || fail "capture service is not active"
 pass "capture service is active"
@@ -57,20 +59,20 @@ pass "capture service is active"
 since='-mmin -2' when='in the last 2 minutes'
 if [ "${1:-}" = reboot ]; then since='-newermt "$(uptime -s)"' when='since the reboot'; fi
 newest=$(on_host "find /var/lib/stopsignal/archive -name '*.pb.gz' $since | sort | tail -1") || true
-[ -n "$(echo "$newest" | tr -d '[:space:]')" ] || fail "no snapshot written $when"
+# Only a snapshot path counts: on_host also prints errors, and the pipe hides find's exit status.
+echo "$newest" | grep -q '\.pb\.gz$' || fail "no snapshot written $when"
 pass "a snapshot was written $when"
 
 on_host 'test -z "$(find /var/lib/stopsignal/archive -name "*.pb.gz" -mmin +70)"' >/dev/null \
   || fail "snapshots older than 70 minutes remain on the disk"
 pass "the disk holds no snapshot older than 70 minutes"
 
-# Keys are raw/<UTC date>/<epoch-ms>.pb.gz, so they sort by time; list from yesterday only.
-yesterday=$(python3 -c 'import datetime as d; print((d.datetime.now(d.timezone.utc) - d.timedelta(days=1)).strftime("%Y-%m-%d"))')
-latest=$(aws s3api list-objects-v2 --bucket "$BUCKET" --prefix raw/ --start-after "raw/$yesterday" --query 'Contents[-1].LastModified' --output text)
-[ "$latest" != None ] || fail "nothing in s3://$BUCKET/raw/ yet"
-age=$(python3 -c 'import sys, datetime as d; print(int((d.datetime.now(d.timezone.utc) - d.datetime.fromisoformat(sys.argv[1])).total_seconds()))' "$latest")
-[ "$age" -le 720 ] || fail "newest object in raw/ is ${age}s old, over 12 minutes"
-pass "newest object in raw/ is ${age}s old"
+# The acceptance itself: a snapshot written more than 10 minutes ago is already in S3.
+# The newest such file is the one most likely to be missing, so it is the one checked.
+old=$(on_host 'cd /var/lib/stopsignal/archive && find . -name "*.pb.gz" -mmin +10 -mmin -15 | sort | tail -1')
+key=$(echo "$old" | grep -o '[0-9-]*/[0-9]*\.pb\.gz$') || fail "no snapshot 10–15 minutes old on the host yet; rerun once it has run 15 minutes"
+aws s3api head-object --bucket "$BUCKET" --key "raw/$key" >/dev/null 2>&1 || fail "raw/$key, written over 10 minutes ago, is not in S3"
+pass "raw/$key, written over 10 minutes ago, is in S3"
 
 for target in "s3://$BUCKET/elsewhere/probe" "s3://$BUCKET/deploy/probe"; do
   # Only AccessDenied counts: any other failure means the probe did not run.

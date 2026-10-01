@@ -27,4 +27,5 @@ Node.js 22.18 or later in the 22 LTS line, which runs TypeScript by stripping ty
 | `packages/console/` | The stand-in driver console |
 | `packages/feed-capture/` | The GTFS-Realtime poller that archives raw snapshots |
 | `packages/replay/` | The replay harness |
+| `infra/` | Scripts that stand up and check the AWS hosts |
 | `test/` | Guards over the whole repository |
