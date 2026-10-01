@@ -68,14 +68,20 @@ restart() {
 trap restart EXIT
 trap 'exit 1' INT TERM
 
-# The rescue is armed in the same command as the stop, so capture never stops without it.
-on_host "$CLEAR systemd-run --collect --on-active=16min --unit=stopsignal-capture-rescue /usr/bin/systemctl start stopsignal-capture \
+# The rescue (960 s, 16 minutes) is armed in the same command as the stop, so capture never stops without it.
+on_host "$CLEAR systemd-run --collect --on-active=960 --unit=stopsignal-capture-rescue /usr/bin/systemctl start stopsignal-capture \
   && systemctl stop stopsignal-capture" >/dev/null || fail "cannot arm the rescue and stop capture"
 stopped=$(date +%s)
 since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 echo "capture stopped; waiting for ALARM"
 alarm_after=$(wait_for ALARM "$stopped" 330) || fail "$ALARM did not reach ALARM within 330 s of the stop"
 echo "ALARM ${alarm_after}s after the stop"
+
+on_host "$START" >/dev/null || fail "cannot restart capture"
+trap - EXIT
+restarted=$(date +%s)
+pass "capture restarted after a gap of $((restarted - stopped))s"
+
 # The state proves the alarm fired; the Action history item proves it published to the topic.
 # ponytail: matches "successfully" loosely, as AWS documents no example of an Action item's summary.
 for _ in 1 2 3 4 5 6; do
@@ -87,10 +93,6 @@ done
 echo "$summary" | grep -qi successfully || fail "$ALARM reached ALARM but its action did not succeed: $summary"
 pass "$ALARM executed its action: $summary"
 
-on_host "$START" >/dev/null || fail "cannot restart capture"
-trap - EXIT
-restarted=$(date +%s)
-pass "capture restarted after a gap of $((restarted - stopped))s"
 ok_after=$(wait_for OK "$restarted" 600) || fail "$ALARM did not return to OK within 10 minutes of the restart"
 pass "$ALARM returned to OK ${ok_after}s after the restart"
 
