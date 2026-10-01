@@ -12,24 +12,26 @@ REPO=nomadwiz/stop-signal
 fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "ok:   $*"; }
 
-# GitHub issues the subject in the form this repository is set to, which for one created after
-# 15-07-2026 carries the owner's and the repository's IDs; the trust policy must name exactly that.
-sub="$(gh api "repos/$REPO/actions/oidc/customization/sub" --jq .sub_claim_prefix):ref:refs/heads/master"
-trust=$(aws iam get-role --role-name stopsignal-deploy --query Role.AssumeRolePolicyDocument --output json) \
-  || fail "no role stopsignal-deploy; run infra/deploy-role.sh"
-# Exactly one statement and exactly these two conditions, so no StringLike wildcard can widen either.
-jq -e --arg sub "$sub" '.Statement | length == 1 and (.[0]
-  | .Effect == "Allow" and .Action == "sts:AssumeRoleWithWebIdentity"
-    and (.Principal.Federated | endswith(":oidc-provider/token.actions.githubusercontent.com"))
-    and .Condition == {StringEquals: {"token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-                                      "token.actions.githubusercontent.com:sub": $sub}})' <<<"$trust" >/dev/null \
-  || fail "stopsignal-deploy's trust policy does not require exactly audience sts.amazonaws.com and subject $sub: $trust"
-pass "stopsignal-deploy trusts only audience sts.amazonaws.com and subject $sub"
+NAME=stopsignal-deploy
+aws iam get-user --user-name "$NAME" >/dev/null 2>&1 || fail "no user $NAME; run infra/deploy-user.sh"
+keys=$(aws iam list-access-keys --user-name "$NAME" --query "length(AccessKeyMetadata[?Status=='Active'])" --output text)
+[ "$keys" = 1 ] || fail "$NAME has $keys active access keys, not 1; run infra/deploy-user.sh --rotate-key"
+pass "$NAME exists with one active access key"
 
-# Names only: gh cannot read a secret's value, so a key stored under an innocent name would pass.
-secrets=$(gh secret list -R "$REPO" --json name --jq '.[].name')
-if grep -qi aws <<<"$secrets"; then fail "an AWS secret is stored in $REPO: $(grep -i aws <<<"$secrets" | tr '\n' ' ')"; fi
-pass "no secret in $REPO is named for AWS: $(tr '\n' ' ' <<<"$secrets")"
+# Its grants are exactly the policy file: one inline policy, equal to the file once rendered, and nothing attached.
+ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+want=$(sed "s/BUCKET/stopsignal-archive-$ACCOUNT/g; s/ACCOUNT/$ACCOUNT/g" "$(dirname "$0")/deploy-user-policy.json" | jq -S .)
+[ "$(aws iam list-user-policies --user-name "$NAME" --query PolicyNames --output text)" = deploy ] \
+  && [ -z "$(aws iam list-attached-user-policies --user-name "$NAME" --query AttachedPolicies --output text)" ] \
+  && [ "$(aws iam get-user-policy --user-name "$NAME" --policy-name deploy --query PolicyDocument --output json | jq -S .)" = "$want" ] \
+  || fail "$NAME's grants are not exactly infra/deploy-user-policy.json; run infra/deploy-user.sh"
+pass "$NAME holds only infra/deploy-user-policy.json"
+
+# Names only, as gh cannot read a value: the key's two halves and no other secret named for AWS.
+aws_secrets=$(gh secret list -R "$REPO" --json name --jq '[.[].name | select(test("aws"; "i"))] | sort | join(" ")')
+[ "$aws_secrets" = "AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY" ] \
+  || fail "$REPO's AWS secrets are '$aws_secrets', not AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY; run infra/deploy-user.sh --rotate-key"
+pass "$REPO stores AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY and no other AWS secret"
 
 head=$(gh api "repos/$REPO/commits/master" --jq .sha)
 read -r run started_run sha < <(gh run list -R "$REPO" -w ci.yml -b master -s success -L 1 \
