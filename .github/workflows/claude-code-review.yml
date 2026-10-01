@@ -361,7 +361,7 @@ jobs:
             exit 0
           fi
 
-          # Last, so a failure here never costs the merge. GitHub ignores closing
+          # After the merge, so a failure here never costs it. GitHub ignores closing
           # keywords on a merge made with github.token, so #2 and #4 stayed open
           # after #78 and #80 merged. The pull request still lists them, so this
           # closes them. github.token can write only in this repository, so an

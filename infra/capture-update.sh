@@ -3,6 +3,8 @@
 # file changed (#87, ADR-016 decision 3), so a deploy that changes nothing costs capture no poll. A failed
 # download stops here and leaves the running version alone. A new file that does not stay up is replaced
 # by the previous one, kept as capture.ts.prev, and the command fails with the journal's last lines.
+# The roll-back is on the host only: S3's deploy/capture.ts still holds the file that failed, and the host
+# cannot write deploy/, so a host launched before a fixed deploy would fetch it at first boot.
 #
 # Usage: ci.yml's deploy job sends it through Run Command, which runs it as root, with BUCKET replaced by the
 #   archive bucket's name. infra/test-capture-update.sh checks it.
