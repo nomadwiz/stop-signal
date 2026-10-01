@@ -11,9 +11,9 @@ import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 
 export const FEED_URL = 'https://api.at.govt.nz/realtime/legacy';
-const POLL_MS = 20_000;
+export const POLL_MS = 20_000;
 // Shorter than the poll, so a hung request never overlaps the next tick.
-const TIMEOUT_MS = 15_000;
+export const TIMEOUT_MS = 15_000;
 
 interface Capture {
   root: string;
