@@ -4,7 +4,9 @@
 #
 # Usage: infra/capture-host.sh
 #   Run from the build repository's root with the AWS CLI profile `stopsignal`, after the AT key
-#   is stored at /stopsignal/at-key. Safe to re-run: it creates only what is missing, refreshes the
+#   is stored at /stopsignal/at-key. Store it once from the clipboard, so it never reaches a file or the history:
+#     aws ssm put-parameter --name /stopsignal/at-key --type SecureString --overwrite --profile stopsignal \
+#       --value "$(pbpaste | tr -d '[:space:]')" Safe to re-run: it creates only what is missing, refreshes the
 #   role policy and the copy of capture.ts in S3 (the host reads it on first boot only; #87 deploys
 #   later changes), and launches an instance only if none exists, stopped or running.
 #   Then run infra/check-capture-host.sh.
@@ -23,8 +25,10 @@ if ! aws iam get-role --role-name "$NAME" >/dev/null 2>&1; then
   aws iam create-role --role-name "$NAME" >/dev/null --assume-role-policy-document \
     '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
 fi
-if ! aws iam get-instance-profile --instance-profile-name "$NAME" >/dev/null 2>&1; then
-  aws iam create-instance-profile --instance-profile-name "$NAME" >/dev/null
+aws iam get-instance-profile --instance-profile-name "$NAME" >/dev/null 2>&1 \
+  || aws iam create-instance-profile --instance-profile-name "$NAME" >/dev/null
+# Checked apart from the profile, so a run that stopped between the two steps is repaired.
+if [ "$(aws iam get-instance-profile --instance-profile-name "$NAME" --query 'InstanceProfile.Roles[0].RoleName' --output text)" != "$NAME" ]; then
   aws iam add-role-to-instance-profile --instance-profile-name "$NAME" --role-name "$NAME"
   sleep 15 # IAM is eventually consistent; a profile used at once can be rejected by run-instances
 fi

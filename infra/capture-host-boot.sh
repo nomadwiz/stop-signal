@@ -14,14 +14,13 @@ aws s3 cp s3://BUCKET/deploy/capture.ts /opt/stopsignal/capture.ts
 echo '{"type":"module"}' > /opt/stopsignal/package.json
 
 # The key is read at every start, so rotating it in Parameter Store needs only a restart.
-# --experimental-strip-types because AL2023's nodejs22 may predate 22.18, where stripping became the default.
 cat > /opt/stopsignal/run-capture.sh <<EOF
 #!/bin/sh
 # set -e stops here if the key cannot be read, so the journal shows the AWS error, not capture's usage line.
 set -e
 AT_KEY=\$(aws ssm get-parameter --region $AWS_REGION --name /stopsignal/at-key --with-decryption --query Parameter.Value --output text)
 export AT_KEY
-exec $NODE --experimental-strip-types /opt/stopsignal/capture.ts /var/lib/stopsignal/archive
+exec $NODE /opt/stopsignal/capture.ts /var/lib/stopsignal/archive
 EOF
 
 # Uploads whole snapshots only, then frees the disk of what S3 already holds; set -e skips the delete if an upload fails.
