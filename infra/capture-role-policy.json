@@ -1,0 +1,22 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    { "Sid": "ArchiveWrite", "Effect": "Allow", "Action": "s3:PutObject", "Resource": "arn:aws:s3:::BUCKET/raw/*" },
+    { "Sid": "DeployRead", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::BUCKET/deploy/*" },
+    {
+      "Sid": "SyncList",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::BUCKET",
+      "Condition": { "StringLike": { "s3:prefix": "raw/*" } }
+    },
+    { "Sid": "AtKey", "Effect": "Allow", "Action": "ssm:GetParameter", "Resource": "arn:aws:ssm:ap-southeast-2:ACCOUNT:parameter/stopsignal/at-key" },
+    { "Sid": "AgentHeartbeat", "Effect": "Allow", "Action": "ssm:UpdateInstanceInformation", "Resource": "*" },
+    {
+      "Sid": "AgentChannels",
+      "Effect": "Allow",
+      "Action": ["ssmmessages:CreateControlChannel", "ssmmessages:CreateDataChannel", "ssmmessages:OpenControlChannel", "ssmmessages:OpenDataChannel"],
+      "Resource": "*"
+    }
+  ]
+}
