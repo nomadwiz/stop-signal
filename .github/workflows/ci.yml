@@ -44,21 +44,31 @@ jobs:
     needs: suite
     if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
-    # One deploy at a time, and a newer one replaces any still waiting, so an older commit never lands last.
+    # One deploy at a time, and a newer one replaces any still waiting. That orders runs by when they were
+    # queued, not by commit, so the step below also skips any run whose commit is no longer master's head.
     concurrency: deploy
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
-      # The key is given to this step alone, so no action the job uses ever holds it.
+      # The key is set on this step alone. actions/checkout runs before it, and a step cannot read a later
+      # step's env, so checkout never holds the key.
       - name: Deploy capture.ts
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_REGION: ap-southeast-2
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          head=$(gh api "repos/$GITHUB_REPOSITORY/commits/master" --jq .sha)
+          if [ "$head" != "$GITHUB_SHA" ]; then
+            echo "master has moved on to $head, whose own run deploys it; not deploying $GITHUB_SHA."
+            exit 0
+          fi
           bucket=stopsignal-archive-995583236543
           aws s3 cp packages/feed-capture/src/capture.ts "s3://$bucket/deploy/capture.ts" --only-show-errors
           . infra/on-host.sh
