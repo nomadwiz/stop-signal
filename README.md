@@ -11,7 +11,7 @@ The design, its decisions and the reports are in `nomadwiz/stop-signal-doc`. Clo
 
 ## Running
 
-Node.js 22 LTS and npm.
+Node.js 22.18 or later in the 22 LTS line, which runs TypeScript by stripping types, and npm.
 
     npm ci
     npm test            # Vitest, every workspace

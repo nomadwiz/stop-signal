@@ -3,10 +3,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
-import { captureOnce, FEED_URL } from './capture.ts';
+import { captureOnce, FEED_URL, POLL_MS, TIMEOUT_MS } from './capture.ts';
 
-// 2026-10-01T06:16:10.123Z
-const AT = 1790835370123;
+// 2026-10-01T12:00:00.123Z: already 02-10-2026 in Auckland, so the folder name proves the date is UTC.
+const AT = 1790856000123;
 const snapshot = new Uint8Array([0x0a, 0x0d, 0x0a, 0x03, 0x32, 0x2e, 0x30]);
 
 async function freshRoot(): Promise<string> {
@@ -38,6 +38,7 @@ describe('captureOnce', () => {
     await captureOnce({ root: await freshRoot(), key: 'k', now: () => AT, fetchFeed, log: () => {} });
 
     expect(seenInit?.signal).toBeInstanceOf(AbortSignal);
+    expect(TIMEOUT_MS).toBeLessThan(POLL_MS);
   });
 
   it('writes the response gzipped to <root>/<UTC date>/<epoch-ms>.pb.gz', async () => {
@@ -55,7 +56,7 @@ describe('captureOnce', () => {
 
     await captureOnce({ root: await freshRoot(), key: 'k', now: () => AT, fetchFeed: async () => new Response(snapshot), log: (l) => lines.push(l) });
 
-    expect(lines).toEqual([`2026-10-01T06:16:10.123Z 200 ${snapshot.length} bytes`]);
+    expect(lines).toEqual([`2026-10-01T12:00:00.123Z 200 ${snapshot.length} bytes`]);
   });
 
   it('writes nothing and logs the status when AT refuses the request', async () => {
@@ -66,7 +67,7 @@ describe('captureOnce', () => {
     await captureOnce({ root, key: 'k', now: () => AT, fetchFeed: refused, log: (l) => lines.push(l) });
 
     expect(await readdir(root)).toEqual([]);
-    expect(lines).toEqual(['2026-10-01T06:16:10.123Z 401 not archived']);
+    expect(lines).toEqual(['2026-10-01T12:00:00.123Z 401 not archived']);
   });
 
   it('releases a refused response body, so a week of refusals holds no sockets open', async () => {
@@ -88,6 +89,6 @@ describe('captureOnce', () => {
     await expect(
       captureOnce({ root: await freshRoot(), key: 'k', now: () => AT, fetchFeed: offline, log: (l) => lines.push(l) }),
     ).resolves.toBeUndefined();
-    expect(lines).toEqual(['2026-10-01T06:16:10.123Z error TypeError: fetch failed (Error: getaddrinfo ENOTFOUND api.at.govt.nz)']);
+    expect(lines).toEqual(['2026-10-01T12:00:00.123Z error TypeError: fetch failed (Error: getaddrinfo ENOTFOUND api.at.govt.nz)']);
   });
 });
