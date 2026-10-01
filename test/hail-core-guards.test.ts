@@ -6,9 +6,10 @@ import { describe, expect, it } from 'vitest';
 
 const eslint = new ESLint();
 
-async function errorsIn(code: string, filePath: string): Promise<number> {
+// Counts only the clock ban's errors, so an unrelated error cannot pass a 'rejects' case.
+async function clockErrors(code: string, filePath: string): Promise<number> {
   const [result] = await eslint.lintText(code, { filePath });
-  return result.errorCount;
+  return result.messages.filter((m) => m.message.includes('ADR-002')).length;
 }
 
 describe('hail-core reads no clock', () => {
@@ -19,18 +20,25 @@ describe('hail-core reads no clock', () => {
     'setTimeout(() => {}, 1);',
     'setInterval(() => {}, 1);',
     'performance.now();',
+    'process.hrtime();',
+    'process.hrtime.bigint();',
+    'process.uptime();',
+    'globalThis.setTimeout(() => {}, 1);',
+    "import { setTimeout as sleep } from 'node:timers/promises'; await sleep(1);",
+    "import { setTimeout as sleep } from 'timers/promises'; await sleep(1);",
+    "import { setInterval as every } from 'node:timers'; every(() => {}, 1);",
   ];
 
   it.each(banned)('rejects %s inside hail-core', async (code) => {
-    expect(await errorsIn(code, 'packages/hail-core/src/x.ts')).toBeGreaterThan(0);
+    expect(await clockErrors(code, 'packages/hail-core/src/x.ts')).toBeGreaterThan(0);
   });
 
   it.each(banned)('allows %s outside hail-core', async (code) => {
-    expect(await errorsIn(code, 'packages/hail-service/src/x.ts')).toBe(0);
+    expect(await clockErrors(code, 'packages/hail-service/src/x.ts')).toBe(0);
   });
 
   it('allows a Date built from a known instant', async () => {
-    expect(await errorsIn('new Date(0);', 'packages/hail-core/src/x.ts')).toBe(0);
+    expect(await clockErrors('new Date(0);', 'packages/hail-core/src/x.ts')).toBe(0);
   });
 });
 
