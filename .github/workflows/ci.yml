@@ -1,13 +1,16 @@
-# Runs the suite and the replay check on every push, as QR9 and ADR-004 require.
-# A status check required on master names this job by its id, `suite`, so
-# renaming the job drops the requirement silently.
+# Runs the suite and the replay check on every push, as QR9 and ADR-004 require, then deploys
+# feed-capture to its host from master (ADR-016). A status check required on master names the
+# suite job by its id, `suite`, so renaming the job drops the requirement silently.
 #
-# A push made with GITHUB_TOKEN starts no workflow, so the review workflow's
-# squash merges are not checked here.
+# A push made with GITHUB_TOKEN starts no workflow, so the review workflow's squash merges start
+# no push run. The review dispatches this workflow on master after each merge instead:
+# workflow_dispatch is one of the two events that token can still start.
 
 name: CI
 
-on: push
+on:
+  push:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -32,3 +35,32 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run replay:check
+
+  # Uploads capture.ts to S3 and has the host put it in place, restarting capture only if it changed
+  # (infra/capture-update.sh). It holds no stored key: it signs in as stopsignal-deploy through GitHub's
+  # OpenID Connect provider, and that role trusts master of this repository alone (infra/deploy-role.sh).
+  deploy:
+    needs: suite
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    # One deploy at a time, and a newer one replaces any still waiting, so an older commit never lands last.
+    concurrency: deploy
+    permissions:
+      id-token: write # sign in to AWS
+      contents: read # actions/checkout
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned to a commit, since this step holds the token that can deploy. v6.3.0.
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd
+        with:
+          role-to-assume: arn:aws:iam::995583236543:role/stopsignal-deploy
+          aws-region: ap-southeast-2
+
+      - name: Deploy capture.ts
+        run: |
+          set -euo pipefail
+          bucket=stopsignal-archive-995583236543
+          aws s3 cp packages/feed-capture/src/capture.ts "s3://$bucket/deploy/capture.ts" --only-show-errors
+          . infra/on-host.sh
+          on_host "$(sed "s/BUCKET/$bucket/g" infra/capture-update.sh)"
