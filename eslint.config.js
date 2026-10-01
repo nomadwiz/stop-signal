@@ -8,7 +8,7 @@ const useClock = 'hail-core reads time only through the injected Clock port (ADR
 const banned = (object, ...properties) => properties.map((property) => ({ object, property, message: useClock }));
 
 export default defineConfig(
-  tseslint.configs.recommended,
+  { files: ['**/*.ts'], languageOptions: { parser: tseslint.parser } },
   {
     files: ['packages/hail-core/**'],
     rules: {
