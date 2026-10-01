@@ -1,4 +1,3 @@
-import js from '@eslint/js';
 import { defineConfig } from 'eslint/config';
 import tseslint from 'typescript-eslint';
 
@@ -9,7 +8,6 @@ const useClock = 'hail-core reads time only through the injected Clock port (ADR
 const banned = (object, ...properties) => properties.map((property) => ({ object, property, message: useClock }));
 
 export default defineConfig(
-  js.configs.recommended,
   tseslint.configs.recommended,
   {
     files: ['packages/hail-core/**'],
