@@ -142,6 +142,21 @@ jobs:
             - Any script kept longer than a day gets a usage comment at the top.
             - Anything relied on gets a test.
 
+            ## Earlier rounds
+
+            Every push to this pull request runs this review again. A run that does not know what earlier rounds said finds something new in lines they already passed, and the pull request never converges. So read them first:
+
+            ```
+            gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews --paginate --jq '[.[] | select(.user.login == "claude[bot]" or .user.login == "github-actions[bot]") | {id, state, commit_id, submitted_at, body}]'
+            gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments --paginate
+            ```
+
+            - **None:** this is the first round. Review the whole diff.
+            - **Otherwise** the latest one's `commit_id` is the last reviewed commit, and this round does two things and no more. First, under `### Earlier findings` in the body, say for each earlier blocker whether it is fixed, still open, or answered in a reply. Second, review `git diff <last reviewed commit>..${{ github.event.pull_request.head.sha }}` — only what changed since — and run both reviewers over that diff, not the whole pull request.
+            - A blocker still open is a blocker of this round too: restate it in `comments` if its line is still in the diff, otherwise in the body.
+            - A line an earlier round read and passed is not reopened. Advice an earlier round gave is not reversed unless following it introduced a blocker; where you do reverse one, name the round and say why.
+            - Where `git log -1 <last reviewed commit>` fails, the branch was rewritten: review the whole diff as a first round.
+
             ## Run both reviewers over the diff
 
             - `/agent-skills:review` for correctness, architecture and security.
@@ -183,13 +198,15 @@ jobs:
 
             Use `"event": "COMMENT"` with an empty `comments` array when you found nothing. Never `"APPROVE"`: the token is forbidden from it and the call fails.
 
-            **A clean verdict merges the pull request.** A `COMMENT` carrying a summary and no inline comments is squash-merged by the step that runs after you, without anybody looking at it first. So post one only where you would merge the change yourself, and use `REQUEST_CHANGES` wherever you would want a person to look — including any change to scope or libraries that no ADR records.
+            **Only a blocker blocks.** A blocker is a correctness or security defect, a breach of a rule the files above state, or drift between the repositories. Everything else — wording, a tighter phrasing, an optional cut, most of what `/ponytail:ponytail-review` finds — is a suggestion. A suggestion goes in the body under `### Suggestions`, never in `comments`, and never makes the verdict `REQUEST_CHANGES`. `comments` holds blockers only.
+
+            **A clean verdict merges the pull request.** A `COMMENT` carrying a summary and no inline comments is squash-merged by the step that runs after you, without anybody looking at it first. So post one only where you would merge the change yourself, and use `REQUEST_CHANGES` only when at least one finding blocks — and a change to scope or libraries that no ADR records always blocks.
 
             Every `line` must be one the diff touches, or GitHub rejects the whole review with a 422. `side` is `"RIGHT"` for an added or changed line and `"LEFT"` for a removed one. A finding about a file the diff does not touch goes in the body, not in `comments`.
 
             **Post nothing separately — one review is the deliverable.** Comments without a verdict leave the pull request unblocked with findings scattered through it, and a verdict without its comments makes the author hunt for the lines. A run that posts comments and no verdict fails the job.
 
-            Open the body with one sentence saying whether anything blocks. Then group the findings under `### Correctness`, `### Drift against the documents`, `### Project rules` and `### What can be deleted`, leaving out any group that is empty. Quote the rule or the document you measured against, so the author can check your reading. A finding with no file and line is not a finding.
+            Open the body with one sentence saying whether anything blocks. Then group the findings under `### Correctness`, `### Drift against the documents`, `### Project rules` and `### Suggestions`, leaving out any group that is empty. Quote the rule or the document you measured against, so the author can check your reading. A finding with no file and line is not a finding.
 
             Report only what you can point at. Where something cannot be determined from this code and those documents, say so and stop. Never pick the most plausible reading and carry on.
 
