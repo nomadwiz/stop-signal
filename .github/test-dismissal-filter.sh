@@ -6,10 +6,11 @@
 # or the state wrong and it matches nothing, which looks exactly like a run with
 # nothing to dismiss — so the pull request stays blocked and nothing says why.
 # That is not hypothetical: the first version matched github-actions[bot] only,
-# and the verdict is posted by claude[bot], because the action gives Claude its
-# own app token. The fixture below carries both logins, taken from real reviews
-# on nomadwiz/kete-doc#27 and nomadwiz/kete#317 rather than from what the filter
-# was expected to see.
+# and the verdict was then posted by claude[bot], because the action gave Claude
+# its own app token. The post job now posts it as github-actions[bot], and the
+# filter keeps both because older reviews are claude[bot]'s. The fixture below
+# carries both logins, taken from real reviews on nomadwiz/kete-doc#27 and
+# nomadwiz/kete#317 rather than from what the filter was expected to see.
 #
 # The filter is read out of the workflow rather than copied here, so there is one
 # copy of it and this checks the one the workflow actually runs.
