@@ -1,0 +1,5 @@
+{
+  "name": "@stopsignal/hail-service",
+  "private": true,
+  "type": "module"
+}
