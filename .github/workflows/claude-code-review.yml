@@ -32,7 +32,7 @@ on:
 permissions:
   contents: write # merge a clean pull request, and update one that is behind
   pull-requests: write # submit a review, and dismiss the previous one
-  issues: read
+  issues: write # close the issues a merged pull request names
   id-token: write
 
 # A second push while a review is running cancels the first, so two reviews never
@@ -290,4 +290,15 @@ jobs:
             echo "Merged #$PR."
           else
             echo "Merge refused. Left open for a person."
+            exit 0
           fi
+
+          # GitHub ignores closing keywords on a merge made with GITHUB_TOKEN, so
+          # #2 and #4 stayed open after #78 and #80 merged. The pull request still
+          # lists them, so close them here.
+          gh pr view "$PR" --repo "$REPO" --json closingIssuesReferences \
+            --jq '.closingIssuesReferences[].url' \
+          | while read -r url; do
+              gh issue close "$url" --comment "Closed by #$PR, which the review merged." \
+                || echo "::warning::Could not close $url."
+            done
