@@ -1,6 +1,6 @@
 # Runs the suite and the replay check on every push, as QR9 and ADR-004 require.
-# The job's name, `suite`, is the status check master requires, so renaming it
-# drops the requirement silently.
+# A status check required on master names this job by its id, `suite`, so
+# renaming the job drops the requirement silently.
 #
 # A push made with GITHUB_TOKEN starts no workflow, so the review workflow's
 # squash merges and branch updates are not checked here.
@@ -9,18 +9,22 @@ name: CI
 
 on: push
 
+permissions:
+  contents: read
+
 jobs:
   suite:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      # Node 22 rather than the engines range: ADR-015 decision 5 types the code
-      # against the newest 22.x declarations and rests on the runtime being the
-      # newest 22.x too.
+      # The newest Node 22, not the engines range or the runner's cached 22.x:
+      # ADR-015 decision 5 types the code against the newest 22.x declarations
+      # and rests on the runtime being the newest 22.x too.
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          check-latest: true
           cache: npm
 
       - run: npm ci
