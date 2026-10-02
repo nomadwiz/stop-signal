@@ -21,5 +21,6 @@ export interface TraceSink {
 
 export function recorder(clock: Clock, sink: TraceSink): (decision: Omit<DecisionRecord, 'seq' | 'at'>) => void {
   let seq = 0;
-  return (decision) => sink.append({ seq: ++seq, at: clock.now(), ...decision });
+  // Picked field by field, so a seq or at the caller's object already carries cannot override these.
+  return ({ kind, hailId, vehicleId, payload }) => sink.append({ seq: ++seq, at: clock.now(), kind, hailId, vehicleId, payload });
 }

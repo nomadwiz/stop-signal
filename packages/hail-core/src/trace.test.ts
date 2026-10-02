@@ -28,4 +28,14 @@ describe('recorder', () => {
       { seq: 2, at: 0, kind: 'signal', hailId: null, vehicleId: 'v9', payload: { hails: ['h1'] } },
     ]);
   });
+
+  it('ignores a seq or at the decision already carries', () => {
+    const log: DecisionRecord[] = [];
+    const record = recorder({ now: () => 42 }, { append: (r) => log.push(r) });
+    const old: DecisionRecord = { seq: 7, at: 9, kind: 'commit', hailId: 'h1', vehicleId: 'v9', payload: {} };
+
+    record(old);
+
+    expect(log[0]).toMatchObject({ seq: 1, at: 42 });
+  });
 });
