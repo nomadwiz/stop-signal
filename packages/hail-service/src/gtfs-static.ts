@@ -159,13 +159,13 @@ async function readCentralDirectory(zipPath: string): Promise<Map<string, Entry>
       const flags = cd.readUInt16LE(p + 8);
       const method = cd.readUInt16LE(p + 10);
       const compressedSize = cd.readUInt32LE(p + 20);
-    const size = cd.readUInt32LE(p + 24);
+      const uncompressedSize = cd.readUInt32LE(p + 24);
       const nameLength = cd.readUInt16LE(p + 28);
       const localHeader = cd.readUInt32LE(p + 42);
       const name = cd.toString('utf8', p + 46, p + 46 + nameLength);
       if (flags & 1) throw new Error(`${name} in ${zipPath} is encrypted`);
       if (method !== 0 && method !== 8) throw new Error(`${name} in ${zipPath} uses compression method ${method}`);
-      if (compressedSize === 0xffffffff || size === 0xffffffff || localHeader === 0xffffffff) throw new Error(`${name} in ${zipPath} is ZIP64`);
+      if (compressedSize === 0xffffffff || uncompressedSize === 0xffffffff || localHeader === 0xffffffff) throw new Error(`${name} in ${zipPath} is ZIP64`);
       // Sizes come from here, not the local header: AT's entries carry data descriptors, so theirs are zero.
       entries.set(name, { method, compressedSize, localHeader });
       p += 46 + nameLength + cd.readUInt16LE(p + 30) + cd.readUInt16LE(p + 32);
@@ -217,7 +217,7 @@ async function* readRows(zipPath: string, entries: Map<string, Entry>, name: str
 }
 
 // About 29 MB; generous, but bounded so a hung request fails instead of stalling whoever waits on it.
-export const DOWNLOAD_TIMEOUT_MS = 300_000;
+const DOWNLOAD_TIMEOUT_MS = 300_000;
 
 export async function downloadFeed(dest: string, fetchFeed: typeof fetch = fetch): Promise<void> {
   const response = await fetchFeed(GTFS_URL, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
