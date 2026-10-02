@@ -5,6 +5,7 @@
 //   Each file is written as <name>.tmp, then renamed: anything syncing or watching the archive
 //   reads only *.pb.gz, since a crash between the two steps leaves the .tmp behind.
 //   Run it in one place at a time: two pollers halve the 35,000-calls-a-week quota (#9).
+import { realpathSync } from 'node:fs';
 import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -52,7 +53,8 @@ export async function captureOnce({ root, key, now, fetchFeed, log }: Capture): 
   }
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+// argv[1] keeps a symlink's path while import.meta.url is the real one, so compare real paths.
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const key = process.env.AT_KEY;
   const root = process.argv[2];
   if (!key || !root) {
