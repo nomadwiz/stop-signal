@@ -11,6 +11,21 @@ import { downloadFeed, GTFS_URL, loadServiceDay, parseCsvLine } from './gtfs-sta
 const FIXTURE = fileURLToPath(new URL('../fixtures/gtfs.zip', import.meta.url));
 // A Monday. School is removed and Event added by calendar_dates.txt; Ended's range closed on 30-09-2026.
 const DAY = '20261005';
+// The signature that opens each central-directory record; the last one found is trips.txt's.
+const CENTRAL = Buffer.from([0x50, 0x4b, 0x01, 0x02]);
+
+async function tempPath(name: string): Promise<string> {
+  return join(await mkdtemp(join(tmpdir(), 'gtfs-')), name);
+}
+
+// Writes a copy of the fixture changed by edit, and returns its path.
+async function patched(name: string, edit: (zip: Buffer) => void): Promise<string> {
+  const zip = await readFile(FIXTURE);
+  edit(zip);
+  const path = await tempPath(name);
+  await writeFile(path, zip);
+  return path;
+}
 
 describe('parseCsvLine', () => {
   it('splits a plain line on commas, keeping empty fields', () => {
@@ -98,71 +113,53 @@ describe('loadServiceDay', () => {
   });
 
   it('rejects a file that is not a zip', async () => {
-    const path = join(await mkdtemp(join(tmpdir(), 'gtfs-')), 'not.zip');
+    const path = await tempPath('not.zip');
     await writeFile(path, 'not a zip');
 
     await expect(loadServiceDay(path, DAY)).rejects.toThrow('zip');
   });
 
   it('rejects an encrypted entry rather than misreading it', async () => {
-    const zip = await readFile(FIXTURE);
-    const central = zip.lastIndexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
-    zip.writeUInt16LE(zip.readUInt16LE(central + 8) | 1, central + 8);
-    const path = join(await mkdtemp(join(tmpdir(), 'gtfs-')), 'encrypted.zip');
-    await writeFile(path, zip);
+    const path = await patched('encrypted.zip', (zip) => {
+      const central = zip.lastIndexOf(CENTRAL);
+      zip.writeUInt16LE(zip.readUInt16LE(central + 8) | 1, central + 8);
+    });
 
     await expect(loadServiceDay(path, DAY)).rejects.toThrow('encrypted');
   });
 
   it('rejects a compression method other than stored or deflated', async () => {
-    const zip = await readFile(FIXTURE);
-    const central = zip.lastIndexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
-    zip.writeUInt16LE(12, central + 10);
-    const path = join(await mkdtemp(join(tmpdir(), 'gtfs-')), 'bzip2.zip');
-    await writeFile(path, zip);
+    const path = await patched('bzip2.zip', (zip) => zip.writeUInt16LE(12, zip.lastIndexOf(CENTRAL) + 10));
 
     await expect(loadServiceDay(path, DAY)).rejects.toThrow('compression method 12');
   });
 
   it('rejects a ZIP64 entry rather than misreading its offset', async () => {
-    const zip = await readFile(FIXTURE);
-    const central = zip.lastIndexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
-    zip.writeUInt32LE(0xffffffff, central + 42);
-    const path = join(await mkdtemp(join(tmpdir(), 'gtfs-')), 'zip64.zip');
-    await writeFile(path, zip);
+    const path = await patched('zip64.zip', (zip) => zip.writeUInt32LE(0xffffffff, zip.lastIndexOf(CENTRAL) + 42));
 
     await expect(loadServiceDay(path, DAY)).rejects.toThrow('ZIP64');
   });
 
   it('rejects an empty file rather than loading an empty day', async () => {
-    const zip = await readFile(FIXTURE);
     // The name's last occurrence is in its central record, 46 bytes in; a zero size there empties it.
-    const central = zip.lastIndexOf('calendar_dates.txt') - 46;
-    zip.writeUInt32LE(0, central + 20);
-    const path = join(await mkdtemp(join(tmpdir(), 'gtfs-')), 'empty.zip');
-    await writeFile(path, zip);
+    const path = await patched('empty.zip', (zip) => zip.writeUInt32LE(0, zip.lastIndexOf('calendar_dates.txt') - 46 + 20));
 
     await expect(loadServiceDay(path, DAY)).rejects.toThrow('calendar_dates.txt in ' + path + ' is empty');
   });
 
   it('rejects a file that lacks a column it reads, rather than loading an empty day', async () => {
-    const zip = await readFile(FIXTURE);
     // calendar_dates.txt is stored, so its header can be renamed in place.
-    const at = zip.indexOf('exception_type');
-    zip.write('exception_kind', at);
-    const path = join(await mkdtemp(join(tmpdir(), 'gtfs-')), 'renamed.zip');
-    await writeFile(path, zip);
+    const path = await patched('renamed.zip', (zip) => zip.write('exception_kind', zip.indexOf('exception_type')));
 
     await expect(loadServiceDay(path, DAY)).rejects.toThrow('calendar_dates.txt in ' + path + ' lacks exception_type');
   });
 
   it('rejects a corrupt deflated entry rather than stopping short', async () => {
-    const zip = await readFile(FIXTURE);
     // The first entry, calendar.txt, is deflated; its data follows the 30-byte header, name and extra field.
-    const data = 30 + zip.readUInt16LE(26) + zip.readUInt16LE(28);
-    zip.fill(0xff, data, data + 4);
-    const path = join(await mkdtemp(join(tmpdir(), 'gtfs-')), 'corrupt.zip');
-    await writeFile(path, zip);
+    const path = await patched('corrupt.zip', (zip) => {
+      const data = 30 + zip.readUInt16LE(26) + zip.readUInt16LE(28);
+      zip.fill(0xff, data, data + 4);
+    });
 
     await expect(loadServiceDay(path, DAY)).rejects.toThrow('invalid');
   });
@@ -170,7 +167,7 @@ describe('loadServiceDay', () => {
 
 describe('downloadFeed', () => {
   it('writes the response body to the destination', async () => {
-    const dest = join(await mkdtemp(join(tmpdir(), 'gtfs-')), 'gtfs.zip');
+    const dest = await tempPath('gtfs.zip');
     let asked = '';
     const fetchFeed = async (input: string | URL | Request) => {
       asked = String(input);
@@ -184,7 +181,7 @@ describe('downloadFeed', () => {
   });
 
   it('bounds the request with a timeout, so a hung download fails', async () => {
-    const dest = join(await mkdtemp(join(tmpdir(), 'gtfs-')), 'gtfs.zip');
+    const dest = await tempPath('gtfs.zip');
     let seen: RequestInit | undefined;
     const fetchFeed = async (_input: string | URL | Request, init?: RequestInit) => {
       seen = init;
@@ -197,7 +194,7 @@ describe('downloadFeed', () => {
   });
 
   it('throws on a refused request', async () => {
-    const dest = join(await mkdtemp(join(tmpdir(), 'gtfs-')), 'gtfs.zip');
+    const dest = await tempPath('gtfs.zip');
 
     await expect(downloadFeed(dest, async () => new Response('', { status: 503 }))).rejects.toThrow('503');
   });
