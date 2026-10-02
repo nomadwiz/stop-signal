@@ -1,0 +1,8 @@
+shape_id,shape_pt_lat,shape_pt_lon,shape_pt_sequence
+S-busway,-36.79470,174.75250,2
+S-busway,-36.84316,174.76576,1
+S-busway,-36.60560,174.69890,10
+S-weekend,-36.84316,174.76576,1
+S-weekend,-36.79470,174.75250,2
+S-event,-36.79470,174.75250,1
+S-event,-36.84316,174.76576,2
