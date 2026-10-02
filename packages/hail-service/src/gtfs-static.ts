@@ -181,15 +181,12 @@ async function readCentralDirectory(zipPath: string): Promise<Map<string, Entry>
   }
 }
 
-// Yields each row as {column: value}. A missing optional file (calendar.txt, calendar_dates.txt,
-// shapes.txt) yields nothing. A missing required file, an empty file, or a missing column the caller
-// reads is an error, so a renamed column fails here rather than loading an empty day.
+// Yields each row as {column: value}. Every file read is required, though GTFS makes some optional:
+// AT's feed carries them all, so a missing file, an empty one, or a missing column the caller reads
+// is an error, and fails here rather than loading a thinner or empty day.
 async function* readRows(zipPath: string, entries: Map<string, Entry>, name: string, columns: string[]): AsyncGenerator<Record<string, string>> {
   const entry = entries.get(name);
-  if (!entry) {
-    if (['calendar.txt', 'calendar_dates.txt', 'shapes.txt'].includes(name)) return;
-    throw new Error(`${zipPath} has no ${name}`);
-  }
+  if (!entry) throw new Error(`${zipPath} has no ${name}`);
   if (entry.compressedSize === 0) throw new Error(`${name} in ${zipPath} is empty`);
   const raw = createReadStream(zipPath, { start: entry.localHeader, end: entry.localHeader + entry.compressedSize - 1 });
   // The iteration below rejects on its input's error, and pipeline hands a read error on to the inflater.

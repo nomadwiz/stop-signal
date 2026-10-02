@@ -148,6 +148,13 @@ describe('loadServiceDay', () => {
     await expect(loadServiceDay(path, DAY)).rejects.toThrow('calendar_dates.txt in ' + path + ' is empty');
   });
 
+  it('rejects a zip that lacks a file it reads, rather than loading a thinner day', async () => {
+    // Renaming the central record's copy of the name hides the entry from the reader.
+    const path = await patched('no-shapes.zip', (zip) => zip.write('shapex.txt', zip.lastIndexOf('shapes.txt')));
+
+    await expect(loadServiceDay(path, DAY)).rejects.toThrow(`${path} has no shapes.txt`);
+  });
+
   it('rejects a file that lacks a column it reads, rather than loading an empty day', async () => {
     // calendar_dates.txt is stored, so its header can be renamed in place.
     const path = await patched('renamed.zip', (zip) => zip.write('exception_kind', zip.indexOf('exception_type')));
