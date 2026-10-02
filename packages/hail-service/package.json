@@ -1,5 +1,8 @@
 {
   "name": "@stopsignal/hail-service",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "dependencies": {
+    "gtfs-realtime-bindings": "2.2.0"
+  }
 }
