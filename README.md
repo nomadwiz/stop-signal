@@ -15,7 +15,7 @@ Node.js 22.18 or later in the 22 LTS line, which runs TypeScript by stripping ty
 
     npm ci
     npm test            # Vitest, every workspace
-    npm run lint        # ESLint, including the clock ban in hail-core
+    npm run lint        # ESLint, including the clock and import bans in hail-core
     npm run typecheck   # tsc, no output
 
 ## Where files belong

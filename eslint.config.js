@@ -4,13 +4,17 @@ import tsParser from '@typescript-eslint/parser';
 // ADR-002 rule 1: hail-core never reads the wall clock, sleeps or sets a timeout.
 // Time reaches it only through the injected Clock port, so a replay is byte-identical.
 // ponytail: matches names, not values, so `const D = Date; D.now()` passes (ADR-015 decision 5).
+// Likewise the import regexes see the specifier, not the importer's folder: only the four siblings are banned by name, review covers other `../` escapes.
 const useClock = 'hail-core reads time only through the injected Clock port (ADR-002 rule 1).';
+const inward = 'hail-core reaches only its own files; everything outside reaches it through a port (ADR-012 rule 1).';
 const banned = (object, ...properties) => properties.map((property) => ({ object, property, message: useClock }));
 
 export default defineConfig(
   { files: ['**/*.ts'], languageOptions: { parser: tsParser } },
   {
     files: ['packages/hail-core/**'],
+    // Both bans guard production code's determinism and seam; a test has to import vitest.
+    ignores: ['**/*.test.ts'],
     rules: {
       'no-restricted-properties': [
         'error',
@@ -22,19 +26,27 @@ export default defineConfig(
         'error',
         // The timers, then the global objects: banning those closes every `globalThis.Date.now()`-style route at once.
         ...['setTimeout', 'setInterval', 'globalThis', 'global', 'window', 'self'].map((name) => ({ name, message: useClock })),
+        ...['fetch', 'WebSocket', 'EventSource', 'XMLHttpRequest', 'process', 'require'].map((name) => ({ name, message: inward })),
       ],
       'no-restricted-syntax': [
         'error',
         { selector: "NewExpression[callee.name='Date'][arguments.length=0]", message: useClock },
         { selector: "CallExpression[callee.name='Date']", message: useClock },
+        { selector: 'ImportExpression', message: inward },
+        { selector: 'TSImportType', message: inward },
       ],
-      // #47's adapter-import ban belongs in this same list: a later block setting this rule replaces it.
+      // ADR-002's clock modules, then ADR-012 rule 1: anything not starting `./` or `../`, or a path into a sibling package.
+      // A later block setting this rule replaces it, so both bans live in this one entry.
       'no-restricted-imports': [
         'error',
         {
           paths: ['timers', 'timers/promises', 'process', 'perf_hooks']
             .flatMap((name) => [name, `node:${name}`])
             .map((name) => ({ name, message: useClock })),
+          patterns: [
+            { regex: '^(?!\\.{1,2}/)', message: inward },
+            { regex: '(^|/)(\\.\\.|packages)/(hail-service|feed-capture|replay|console)(/|$)', message: inward },
+          ],
         },
       ],
     },
