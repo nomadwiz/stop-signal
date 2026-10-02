@@ -1,6 +1,8 @@
-import { mkdtemp, readdir, readFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { mkdtemp, readdir, readFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { gunzipSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
 import { captureOnce, FEED_URL, POLL_MS, TIMEOUT_MS } from './capture.ts';
@@ -90,5 +92,18 @@ describe('captureOnce', () => {
       captureOnce({ root: await freshRoot(), key: 'k', now: () => AT, fetchFeed: offline, log: (l) => lines.push(l) }),
     ).resolves.toBeUndefined();
     expect(lines).toEqual(['2026-10-01T12:00:00.123Z error TypeError: fetch failed (Error: getaddrinfo ENOTFOUND api.at.govt.nz)']);
+  });
+});
+
+describe('capture.ts run as a program', () => {
+  // systemd or a deploy could start it through a symlink; the entry check must still run it.
+  it('starts when invoked through a symlink, so a missing key is reported rather than ignored', async () => {
+    const link = join(await freshRoot(), 'capture.ts');
+    await symlink(fileURLToPath(new URL('./capture.ts', import.meta.url)), link);
+
+    const run = spawnSync(process.execPath, [link, '/tmp/unused'], { env: { PATH: process.env.PATH }, encoding: 'utf8' });
+
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain('Usage:');
   });
 });
