@@ -10,16 +10,6 @@ const useClock = 'hail-core reads time only through the injected Clock port (ADR
 const inward = 'hail-core reaches only its own files; everything outside reaches it through a port (ADR-012 rule 1).';
 const banned = (object, ...properties) => properties.map((property) => ({ object, property, message: useClock }));
 
-// The timers, then the global objects: banning those closes every `globalThis.Date.now()`-style route at once.
-const clockGlobals = ['setTimeout', 'setInterval', 'globalThis', 'global', 'window', 'self'].map((name) => ({ name, message: useClock }));
-const clockSyntax = [
-  { selector: "NewExpression[callee.name='Date'][arguments.length=0]", message: useClock },
-  { selector: "CallExpression[callee.name='Date']", message: useClock },
-];
-const clockImports = ['timers', 'timers/promises', 'process', 'perf_hooks']
-  .flatMap((name) => [name, `node:${name}`])
-  .map((name) => ({ name, message: useClock }));
-
 export default defineConfig(
   { files: ['**/*.ts'], languageOptions: { parser: tsParser } },
   {
@@ -33,12 +23,14 @@ export default defineConfig(
       ],
       'no-restricted-globals': [
         'error',
-        ...clockGlobals,
+        // The timers, then the global objects: banning those closes every `globalThis.Date.now()`-style route at once.
+        ...['setTimeout', 'setInterval', 'globalThis', 'global', 'window', 'self'].map((name) => ({ name, message: useClock })),
         ...['fetch', 'WebSocket', 'EventSource', 'XMLHttpRequest', 'process', 'require'].map((name) => ({ name, message: inward })),
       ],
       'no-restricted-syntax': [
         'error',
-        ...clockSyntax,
+        { selector: "NewExpression[callee.name='Date'][arguments.length=0]", message: useClock },
+        { selector: "CallExpression[callee.name='Date']", message: useClock },
         { selector: 'ImportExpression', message: inward },
         { selector: 'TSImportType', message: inward },
       ],
@@ -47,7 +39,9 @@ export default defineConfig(
       'no-restricted-imports': [
         'error',
         {
-          paths: clockImports,
+          paths: ['timers', 'timers/promises', 'process', 'perf_hooks']
+            .flatMap((name) => [name, `node:${name}`])
+            .map((name) => ({ name, message: useClock })),
           patterns: [
             { regex: '^(?!\\.{1,2}/)', message: inward },
             { regex: '(^|/)(\\.\\.|packages)/(hail-service|feed-capture|replay|console)(/|$)', message: inward },
@@ -58,11 +52,26 @@ export default defineConfig(
   },
   {
     // Tests must import vitest, so only the import ban is lifted; the clock ban still holds (ADR-002 rule 1).
+    // These lists repeat the hail-core block's clock entries; test/hail-core-guards.test.ts runs every clock case against both, so drift fails the suite.
     files: ['packages/hail-core/**/*.test.ts'],
     rules: {
-      'no-restricted-globals': ['error', ...clockGlobals],
-      'no-restricted-syntax': ['error', ...clockSyntax],
-      'no-restricted-imports': ['error', { paths: clockImports }],
+      'no-restricted-globals': [
+        'error',
+        ...['setTimeout', 'setInterval', 'globalThis', 'global', 'window', 'self'].map((name) => ({ name, message: useClock })),
+      ],
+      'no-restricted-syntax': [
+        'error',
+        { selector: "NewExpression[callee.name='Date'][arguments.length=0]", message: useClock },
+        { selector: "CallExpression[callee.name='Date']", message: useClock },
+      ],
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: ['timers', 'timers/promises', 'process', 'perf_hooks']
+            .flatMap((name) => [name, `node:${name}`])
+            .map((name) => ({ name, message: useClock })),
+        },
+      ],
     },
   },
 );
