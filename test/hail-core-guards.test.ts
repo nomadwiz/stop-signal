@@ -1,5 +1,5 @@
 // Guards on hail-core that the compiler cannot enforce: ADR-002 rule 1 (no clock reads,
-// sleeps or timeouts) and ADR-015 (no runtime dependencies).
+// sleeps or timeouts), ADR-012 rule 1 (no imports but its own files) and ADR-015 (no runtime dependencies).
 import { readFile } from 'node:fs/promises';
 import { ESLint } from 'eslint';
 import { describe, expect, it } from 'vitest';
@@ -10,6 +10,12 @@ const eslint = new ESLint();
 async function clockErrors(code: string, filePath: string): Promise<number> {
   const [result] = await eslint.lintText(code, { filePath });
   return result.messages.filter((m) => m.message.includes('ADR-002')).length;
+}
+
+// Counts only the import ban's errors, for the same reason.
+async function inwardErrors(code: string, filePath: string): Promise<number> {
+  const [result] = await eslint.lintText(code, { filePath });
+  return result.messages.filter((m) => m.message.includes('ADR-012')).length;
 }
 
 describe('hail-core reads no clock', () => {
@@ -50,6 +56,55 @@ describe('hail-core reads no clock', () => {
 
   it('allows a Date built from a known instant', async () => {
     expect(await clockErrors('new Date(0);', 'packages/hail-core/src/x.ts')).toBe(0);
+  });
+
+  it.each(banned)('rejects %s in a hail-core test file', async (code) => {
+    expect(await clockErrors(code, 'packages/hail-core/src/x.test.ts')).toBeGreaterThan(0);
+  });
+});
+
+describe('hail-core imports nothing outward', () => {
+  const banned = [
+    "import '@stopsignal/hail-service';",
+    "import '@stopsignal/replay';",
+    "import { x } from '../../hail-service/src/gtfs-static.ts';",
+    "import { x } from '../../feed-capture/src/x.ts';",
+    "import { x } from '../../../packages/replay/src/x.ts';",
+    "import { readFile } from 'node:fs/promises';",
+    "import fs from 'fs';",
+    "import http from 'node:http';",
+    "import x from 'gtfs-realtime-bindings';",
+    "export { x } from 'node:fs';",
+    "await fetch('https://example.com');",
+    "new WebSocket('wss://example.com');",
+    "new EventSource('https://example.com');",
+    'new XMLHttpRequest();',
+    "await import('node:http');",
+    "await import('./clock.ts');",
+    "process.getBuiltinModule('node:fs');",
+    'process.env.HOME;',
+    "require('fs');",
+    "import type { Stats } from 'node:fs';",
+    "type T = import('node:fs').Stats;",
+  ];
+
+  it.each(banned)('rejects %s inside hail-core', async (code) => {
+    expect(await inwardErrors(code, 'packages/hail-core/src/x.ts')).toBeGreaterThan(0);
+  });
+
+  it.each(banned)('allows %s outside hail-core', async (code) => {
+    expect(await inwardErrors(code, 'packages/hail-service/src/x.ts')).toBe(0);
+  });
+
+  it.each(["import { Clock } from './clock.ts';", "import { x } from '../ports/x.ts';", "import { x } from './replay/x.ts';"])(
+    'allows its own file %s',
+    async (code) => {
+      expect(await inwardErrors(code, 'packages/hail-core/src/x.ts')).toBe(0);
+    },
+  );
+
+  it('exempts hail-core test files', async () => {
+    expect(await inwardErrors("import { describe } from 'vitest';", 'packages/hail-core/src/x.test.ts')).toBe(0);
   });
 });
 
