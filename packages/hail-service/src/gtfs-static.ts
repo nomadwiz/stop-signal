@@ -143,11 +143,13 @@ async function readCentralDirectory(zipPath: string): Promise<Map<string, Entry>
     const tail = Buffer.alloc(tailLength);
     await file.read(tail, 0, tailLength, size - tailLength);
     const eocd = tail.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
-    if (eocd < 0) throw new Error(`${zipPath} is not a zip`);
+    if (eocd < 0 || eocd + 22 > tailLength) throw new Error(`${zipPath} is not a zip`);
     const count = tail.readUInt16LE(eocd + 10);
     const cdSize = tail.readUInt32LE(eocd + 12);
     const cdOffset = tail.readUInt32LE(eocd + 16);
     if (count === 0xffff || cdOffset === 0xffffffff) throw new Error(`${zipPath} is ZIP64, which this reader does not handle`);
+    // Checked before allocating: a corrupt record could otherwise ask for 4 GB and abort the process.
+    if (cdOffset + cdSize > size) throw new Error(`${zipPath} has a central directory past its end`);
 
     const cd = Buffer.alloc(cdSize);
     await file.read(cd, 0, cdSize, cdOffset);

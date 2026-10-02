@@ -120,6 +120,19 @@ describe('loadServiceDay', () => {
     await expect(loadServiceDay(path, DAY)).rejects.toThrow('zip');
   });
 
+  it('rejects an end record cut short, rather than reading past it', async () => {
+    const path = await tempPath('cut.zip');
+    await writeFile(path, Buffer.from([0x50, 0x4b, 0x05, 0x06, 0, 0]));
+
+    await expect(loadServiceDay(path, DAY)).rejects.toThrow(`${path} is not a zip`);
+  });
+
+  it('rejects a central directory that runs past the end of the file, before allocating it', async () => {
+    const path = await patched('overrun.zip', (zip) => zip.writeUInt32LE(0xfffffff0, zip.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06])) + 12));
+
+    await expect(loadServiceDay(path, DAY)).rejects.toThrow(`${path} has a central directory past its end`);
+  });
+
   it('rejects an encrypted entry rather than misreading it', async () => {
     const path = await patched('encrypted.zip', (zip) => {
       const central = zip.lastIndexOf(CENTRAL);
