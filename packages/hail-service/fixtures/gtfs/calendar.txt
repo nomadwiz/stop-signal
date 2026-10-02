@@ -1,0 +1,5 @@
+service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date
+Weekday,1,1,1,1,1,0,0,20260901,20261231
+Weekend,0,0,0,0,0,1,1,20260901,20261231
+School,1,1,1,1,1,0,0,20260901,20261231
+Ended,1,1,1,1,1,0,0,20260901,20260930
