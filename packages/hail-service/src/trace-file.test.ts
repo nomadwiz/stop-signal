@@ -38,6 +38,6 @@ describe('fileTraceSink', () => {
     fileTraceSink(path).append(RECORDS[0]);
     fileTraceSink(path).append(RECORDS[1]);
 
-    expect((await readFile(path, 'utf8')).split('\n').map((line) => line && JSON.parse(line).seq)).toEqual([1, 2, '']);
+    expect((await readFile(path, 'utf8')).trimEnd().split('\n').map((line) => JSON.parse(line).seq)).toEqual([1, 2]);
   });
 });

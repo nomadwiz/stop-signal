@@ -1,4 +1,4 @@
-// C6's store: appends each decision to a JSON Lines file (ADR-015 decision 4), the log T7 compares byte for byte.
+// C10's store: appends each decision to a JSON Lines file (ADR-015 decision 4), the log T7 compares byte for byte.
 import { appendFileSync } from 'node:fs';
 import type { TraceSink } from '../../hail-core/src/trace.ts';
 
