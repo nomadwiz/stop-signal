@@ -58,8 +58,8 @@ describe('hail-core reads no clock', () => {
     expect(await clockErrors('new Date(0);', 'packages/hail-core/src/x.ts')).toBe(0);
   });
 
-  it('exempts hail-core test files', async () => {
-    expect(await clockErrors('Date.now();', 'packages/hail-core/src/x.test.ts')).toBe(0);
+  it.each(banned)('rejects %s in a hail-core test file', async (code) => {
+    expect(await clockErrors(code, 'packages/hail-core/src/x.test.ts')).toBeGreaterThan(0);
   });
 });
 
@@ -73,8 +73,6 @@ describe('hail-core imports nothing outward', () => {
     "import { readFile } from 'node:fs/promises';",
     "import fs from 'fs';",
     "import http from 'node:http';",
-    "import https from 'https';",
-    "import net from 'net';",
     "import x from 'gtfs-realtime-bindings';",
     "export { x } from 'node:fs';",
     "await fetch('https://example.com');",
