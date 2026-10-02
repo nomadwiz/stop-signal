@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { loadServiceDay, parseCsvLine } from './gtfs-static.ts';
+import { downloadFeed, GTFS_URL, loadServiceDay, parseCsvLine } from './gtfs-static.ts';
 
 // Built from fixtures/gtfs/*.txt, piped so every entry carries a data descriptor as AT's do,
 // with calendar_dates.txt stored rather than deflated:
@@ -165,5 +165,40 @@ describe('loadServiceDay', () => {
     await writeFile(path, zip);
 
     await expect(loadServiceDay(path, DAY)).rejects.toThrow('invalid');
+  });
+});
+
+describe('downloadFeed', () => {
+  it('writes the response body to the destination', async () => {
+    const dest = join(await mkdtemp(join(tmpdir(), 'gtfs-')), 'gtfs.zip');
+    let asked = '';
+    const fetchFeed = async (input: string | URL | Request) => {
+      asked = String(input);
+      return new Response('zip bytes');
+    };
+
+    await downloadFeed(dest, fetchFeed);
+
+    expect(asked).toBe(GTFS_URL);
+    expect(await readFile(dest, 'utf8')).toBe('zip bytes');
+  });
+
+  it('bounds the request with a timeout, so a hung download fails', async () => {
+    const dest = join(await mkdtemp(join(tmpdir(), 'gtfs-')), 'gtfs.zip');
+    let seen: RequestInit | undefined;
+    const fetchFeed = async (_input: string | URL | Request, init?: RequestInit) => {
+      seen = init;
+      return new Response('zip bytes');
+    };
+
+    await downloadFeed(dest, fetchFeed);
+
+    expect(seen?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('throws on a refused request', async () => {
+    const dest = join(await mkdtemp(join(tmpdir(), 'gtfs-')), 'gtfs.zip');
+
+    await expect(downloadFeed(dest, async () => new Response('', { status: 503 }))).rejects.toThrow('503');
   });
 });

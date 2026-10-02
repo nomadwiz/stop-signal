@@ -1,11 +1,19 @@
 // C7: loads AT's GTFS static timetable for one service day into an in-memory index (#19, FR5).
 // No dependency: zip entries are found through the central directory and inflated with node:zlib
 // (ADR-015 decision 6). Only this module knows the wire format; hail-core never imports it.
-import { createReadStream } from 'node:fs';
-import { open } from 'node:fs/promises';
+//
+// Usage: node --expose-gc packages/hail-service/src/gtfs-static.ts <gtfs.zip> <YYYYMMDD>
+//   Downloads AT's feed to <gtfs.zip> first if no file is there, loads that day, and prints the
+//   counts kept and the heap the index holds, which is budget B4's measure (≤ 50 MB base).
+import { createReadStream, createWriteStream, existsSync, realpathSync } from 'node:fs';
+import { open, rename } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { pipeline } from 'node:stream';
+import { pipeline as pipelineAsync } from 'node:stream/promises';
+import { fileURLToPath } from 'node:url';
 import { createInflateRaw } from 'node:zlib';
+
+export const GTFS_URL = 'https://gtfs.at.govt.nz/gtfs.zip';
 
 export interface Stop { id: string; code: string; name: string; lat: number; lon: number }
 export interface Route { id: string; shortName: string; type: number }
@@ -207,4 +215,39 @@ async function* readRows(zipPath: string, entries: Map<string, Entry>, name: str
     // Releases the file when the loop ends early, as it does on a missing column.
     raw.destroy();
   }
+}
+
+// About 29 MB; generous, but bounded so a hung request fails instead of stalling whoever waits on it.
+export const DOWNLOAD_TIMEOUT_MS = 300_000;
+
+export async function downloadFeed(dest: string, fetchFeed: typeof fetch = fetch): Promise<void> {
+  const response = await fetchFeed(GTFS_URL, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
+  if (!response.ok || !response.body) {
+    await response.body?.cancel();
+    throw new Error(`${GTFS_URL} answered ${response.status}`);
+  }
+  // Written aside and renamed, so a broken download never leaves a truncated zip at dest.
+  await pipelineAsync(response.body, createWriteStream(`${dest}.tmp`));
+  await rename(`${dest}.tmp`, dest);
+}
+
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const [zipPath, day] = process.argv.slice(2);
+  const gc = globalThis.gc;
+  if (!zipPath || !day || !gc) {
+    console.error('Usage: node --expose-gc packages/hail-service/src/gtfs-static.ts <gtfs.zip> <YYYYMMDD>');
+    process.exit(1);
+  }
+  if (!existsSync(zipPath)) await downloadFeed(zipPath);
+  gc();
+  const before = process.memoryUsage().heapUsed;
+  const index = await loadServiceDay(zipPath, day);
+  gc();
+  const held = process.memoryUsage().heapUsed - before;
+  let stopTimes = 0;
+  let shapePoints = 0;
+  for (const trip of index.trips.values()) stopTimes += trip.stopTimes.length;
+  for (const points of index.shapes.values()) shapePoints += points.length;
+  console.log(`day ${day}: ${index.trips.size} trips, ${stopTimes} stop times, ${index.shapes.size} shapes (${shapePoints} points), ${index.stops.size} stops, ${index.routes.size} routes`);
+  console.log(`heap held by the index: ${(held / 1024 / 1024).toFixed(1)} MB (B4: ≤ 50 MB base)`);
 }
