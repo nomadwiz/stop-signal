@@ -36,7 +36,8 @@ aws sns set-topic-attributes --topic-arn "$TOPIC" --attribute-name Policy --attr
 EOF
 )"
 
-if [ -z "$(aws sns list-subscriptions-by-topic --topic-arn "$TOPIC" --query "Subscriptions[?Endpoint=='$EMAIL'].SubscriptionArn" --output text)" ]; then
+# jq takes the address as data, so a quote in it cannot break the filter as it would a JMESPath literal.
+if [ -z "$(aws sns list-subscriptions-by-topic --topic-arn "$TOPIC" --output json | jq -r --arg e "$EMAIL" '.Subscriptions[] | select(.Endpoint == $e) | .SubscriptionArn')" ]; then
   aws sns subscribe --topic-arn "$TOPIC" --protocol email --notification-endpoint "$EMAIL" >/dev/null
   echo "open the confirmation email sent to $EMAIL"
 fi
@@ -44,6 +45,6 @@ fi
 aws cloudwatch put-metric-alarm --alarm-name "$ALARM" \
   --alarm-description "Fires when feed-capture has written no snapshot to /var/lib/stopsignal/archive for over 2 minutes, about 3-5 minutes after the last one (#11)" \
   --namespace StopSignal/Capture --metric-name Heartbeat --statistic Sum --period 60 \
-  --evaluation-periods 1 --datapoints-to-alarm 1 --threshold 1 --comparison-operator LessThanThreshold \
+  --evaluation-periods 1 --threshold 1 --comparison-operator LessThanThreshold \
   --treat-missing-data breaching --alarm-actions "$TOPIC"
 echo "alarm $ALARM notifies $TOPIC"
