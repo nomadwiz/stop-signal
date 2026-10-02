@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -191,6 +192,19 @@ describe('downloadFeed', () => {
     await downloadFeed(dest, fetchFeed);
 
     expect(seen?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('leaves nothing at the destination when the body fails mid-download', async () => {
+    const dest = await tempPath('gtfs.zip');
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('half a zip'));
+        controller.error(new Error('connection reset'));
+      },
+    });
+
+    await expect(downloadFeed(dest, async () => new Response(body))).rejects.toThrow('connection reset');
+    expect(existsSync(dest)).toBe(false);
   });
 
   it('throws on a refused request', async () => {
