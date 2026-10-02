@@ -1,0 +1,4 @@
+stop_id,stop_code,stop_name,stop_lat,stop_lon
+A,1001,"Lower Albert St, Stop A",-36.84316,174.76576
+B,1002,Akoranga Station,-36.79470,174.75250
+C,1003,Hibiscus Coast Station,-36.60560,174.69890

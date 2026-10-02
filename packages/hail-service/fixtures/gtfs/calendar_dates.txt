@@ -1,0 +1,4 @@
+service_id,date,exception_type
+School,20261005,2
+Event,20261005,1
+Event,20261006,1

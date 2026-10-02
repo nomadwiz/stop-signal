@@ -1,0 +1,13 @@
+trip_id,arrival_time,departure_time,stop_id,stop_sequence
+T-weekday,07:40:00,07:40:00,C,10
+T-weekday,07:00:00,07:01:00,A,1
+T-weekend,08:00:00,08:00:00,A,1
+T-weekend,08:20:00,08:20:00,B,2
+T-weekday,07:12:30,07:12:30,B,2
+T-school,07:30:00,07:30:00,A,1
+T-school,07:42:00,07:42:00,B,2
+T-ended,09:00:00,09:00:00,A,1
+T-ended,09:12:00,09:12:00,B,2
+T-event,25:30:00,25:30:00,B,1
+T-event,25:42:00,25:42:00,A,2
+T-event,,,B,3
