@@ -36,7 +36,8 @@ export async function actualCalls(index: StaticIndex, root: string, from: number
     .filter(({ at }) => from <= at && at < to)
     .sort((a, b) => a.at - b.at);
 
-  const groups = new Map<string, Fix[]>();
+  // One trajectory per trip and vehicle; every trip kept has startDate === index.day.
+  const groups = new Map<string, { tripId: string; vehicleId: string; fixes: Fix[] }>();
   const observed = new Map<string, Observed>();
   for (const { path } of files) {
     const feed = bindings.transit_realtime.FeedMessage.decode(gunzipSync(await readFile(join(root, path))));
@@ -59,16 +60,16 @@ export async function actualCalls(index: StaticIndex, root: string, from: number
       const tripId = vehicle?.trip?.tripId;
       const at = Number(vehicle?.timestamp) * 1000;
       if (!tripId || !vehicle?.position || !at || vehicle.trip?.startDate !== index.day || !index.trips.has(tripId)) continue;
-      const key = `${tripId}|${index.day}|${vehicle.vehicle?.id ?? ''}`;
-      const fixes = groups.get(key) ?? groups.set(key, []).get(key)!;
-      fixes.push({ at, lat: vehicle.position.latitude, lon: vehicle.position.longitude });
+      const vehicleId = vehicle.vehicle?.id ?? '';
+      const key = JSON.stringify([tripId, vehicleId]);
+      const group = groups.get(key) ?? groups.set(key, { tripId, vehicleId, fixes: [] }).get(key)!;
+      group.fixes.push({ at, lat: vehicle.position.latitude, lon: vehicle.position.longitude });
     }
   }
 
   const calls: Call[] = [];
-  for (const [key, fixes] of groups) {
-    const [tripId, startDate, vehicleId] = key.split('|');
-    for (const { stopId, stopSequence, at } of callsOf(index, tripId, fixes)) calls.push({ tripId, startDate, vehicleId, stopId, stopSequence, at });
+  for (const { tripId, vehicleId, fixes } of groups.values()) {
+    for (const { stopId, stopSequence, at } of callsOf(index, tripId, fixes)) calls.push({ tripId, startDate: index.day, vehicleId, stopId, stopSequence, at });
   }
   calls.sort((a, b) => a.at - b.at || a.tripId.localeCompare(b.tripId) || a.stopSequence - b.stopSequence);
   return { calls, observed };
@@ -107,7 +108,7 @@ const fraction = (part: number, whole: number) => `${part} / ${whole} compared =
 const seconds = (ms: number) => `${ms >= 0 ? '+' : ''}${(ms / 1000).toFixed(1)}`;
 
 // A row of the report; at and gap are absent for a stop never found.
-interface Row { tripId: string; seq: number; stopId: string; at?: number; observed: number; basis: Gap['basis']; gap?: number }
+type Row = Omit<Gap, 'at' | 'gap'> & Partial<Pick<Gap, 'at' | 'gap'>>;
 
 // The markdown the CLI prints for the trips named: a row per stop compared or never found, past each trip's first stop.
 export function report(calls: Call[], observed: Map<string, Observed>, index: StaticIndex, tripIds: string[]): string {
@@ -116,28 +117,29 @@ export function report(calls: Call[], observed: Map<string, Observed>, index: St
   const theirs = new Map([...observed].filter(([key]) => named.has(key.split('|')[0])));
   const { gaps, neverFound } = agreement(mine, theirs, TOLERANCE_MS, index);
   const rows: Row[] = [
-    ...gaps.map((g) => ({ tripId: g.tripId, seq: g.stopSequence, stopId: g.stopId, at: g.at, observed: g.observed, basis: g.basis, gap: g.gap })),
+    ...gaps,
     ...neverFound.map((key): Row => {
-      const [tripId, , sequence] = key.split('|');
+      const [tripId, startDate, sequence] = key.split('|');
+      const stopSequence = Number(sequence);
       const o = theirs.get(key)!;
-      const stopId = index.trips.get(tripId)?.stopTimes.find((st) => st.sequence === Number(sequence))?.stopId ?? '?';
-      return { tripId, seq: Number(sequence), stopId, observed: (o.arrival ?? o.departure)!, basis: o.arrival === undefined ? 'departure' : 'arrival' };
+      const stopId = index.trips.get(tripId)?.stopTimes.find((st) => st.sequence === stopSequence)?.stopId ?? '?';
+      return { tripId, startDate, vehicleId: '', stopId, stopSequence, observed: (o.arrival ?? o.departure)!, basis: o.arrival === undefined ? 'departure' : 'arrival' };
     }),
-  ].sort((a, b) => tripIds.indexOf(a.tripId) - tripIds.indexOf(b.tripId) || a.seq - b.seq);
+  ].sort((a, b) => tripIds.indexOf(a.tripId) - tripIds.indexOf(b.tripId) || a.stopSequence - b.stopSequence);
 
   const within = (ms: number) => gaps.filter((g) => Math.abs(g.gap) <= ms).length;
   const misses = rows.filter((r) => r.gap === undefined || Math.abs(r.gap) > TOLERANCE_MS);
   return [
     '| Trip | Seq | Stop | Derived (NZ) | Observed (NZ) | Basis | Gap (s) |',
     '| --- | --- | --- | --- | --- | --- | --- |',
-    ...rows.map((r) => `| ${r.tripId} | ${r.seq} | ${r.stopId} | ${r.at === undefined ? 'never found' : nzTime.format(r.at)} | ${nzTime.format(r.observed)} | ${r.basis} | ${r.gap === undefined ? '—' : seconds(r.gap)} |`),
+    ...rows.map((r) => `| ${r.tripId} | ${r.stopSequence} | ${r.stopId} | ${r.at === undefined ? 'never found' : nzTime.format(r.at)} | ${nzTime.format(r.observed)} | ${r.basis} | ${r.gap === undefined ? '—' : seconds(r.gap)} |`),
     '',
     `Within 20 s: ${fraction(within(TOLERANCE_MS), gaps.length)}`,
     `Within 30 s: ${fraction(within(30_000), gaps.length)}`,
     `Never found: ${neverFound.length}`,
     '',
     'Misses beyond 20 s or never found:',
-    ...misses.map((r) => `- ${r.tripId} seq ${r.seq} (${r.stopId}): ${r.gap === undefined ? 'never found' : `${seconds(r.gap)} s against the observed ${r.basis}`}`),
+    ...misses.map((r) => `- ${r.tripId} seq ${r.stopSequence} (${r.stopId}): ${r.gap === undefined ? 'never found' : `${seconds(r.gap)} s against the observed ${r.basis}`}`),
   ].join('\n');
 }
 
