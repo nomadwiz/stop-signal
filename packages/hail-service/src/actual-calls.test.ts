@@ -160,3 +160,41 @@ describe('actualCalls', () => {
     expect(calls.map((c) => [c.vehicleId, c.stopId])).toEqual([['V2', 'A'], ['V1', 'B']]);
   });
 });
+
+describe("actualCalls' observed events", () => {
+  // A trip update for one stop, its times in seconds. Unset uncertainty decodes as 0, as AT's observations do.
+  const update = (stopSequence: number, arrival?: object, departure?: object) => ({
+    id: `update ${stopSequence}`,
+    tripUpdate: { trip: { tripId: 'T-weekday', startDate: DAY }, stopTimeUpdate: [{ stopSequence, ...(arrival && { arrival }), ...(departure && { departure }) }] },
+  });
+  const key = (stopSequence: number) => `T-weekday|${DAY}|${stopSequence}`;
+
+  it('keeps arrival and departure apart, each in epoch ms', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'calls-'));
+    await snapshot(root, (T + 100) * 1000, [update(2, { time: T }, { time: T + 30 }), update(10, undefined, { time: T + 50 })]);
+
+    const { observed } = await actualCalls(index, root, FROM, TO);
+
+    expect(observed.get(key(2))).toEqual({ arrival: T * 1000, departure: (T + 30) * 1000 });
+    expect(observed.get(key(10))).toEqual({ departure: (T + 50) * 1000 });
+  });
+
+  it("takes a later snapshot's observation over an earlier one's, as AT revises them", async () => {
+    const root = await mkdtemp(join(tmpdir(), 'calls-'));
+    await snapshot(root, (T + 100) * 1000, [update(2, { time: T })]);
+    await snapshot(root, (T + 120) * 1000, [update(2, { time: T + 8 })]);
+
+    const { observed } = await actualCalls(index, root, FROM, TO);
+
+    expect(observed.get(key(2))).toEqual({ arrival: (T + 8) * 1000 });
+  });
+
+  it('ignores a prediction: a time carrying uncertainty, or one after the snapshot was made', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'calls-'));
+    await snapshot(root, (T + 100) * 1000, [update(2, { time: T, uncertainty: 30 }), update(10, { time: T + 101 })]);
+
+    const { observed } = await actualCalls(index, root, FROM, TO);
+
+    expect(observed.size).toBe(0);
+  });
+});

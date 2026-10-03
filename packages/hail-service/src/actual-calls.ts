@@ -12,9 +12,12 @@ export const CALL_RADIUS_M = 50;
 // at: epoch ms at which the vehicle reached the stop.
 export interface Call { tripId: string; startDate: string; vehicleId: string; stopId: string; stopSequence: number; at: number }
 
+// AT's own observed times at a stop, epoch ms, keyed `tripId|startDate|stopSequence`. Used only to check the calls against.
+export interface Observed { arrival?: number; departure?: number }
+
 interface Fix { at: number; lat: number; lon: number }
 
-export async function actualCalls(index: StaticIndex, root: string, from: number, to: number): Promise<{ calls: Call[] }> {
+export async function actualCalls(index: StaticIndex, root: string, from: number, to: number): Promise<{ calls: Call[]; observed: Map<string, Observed> }> {
   // Keyed by time, never by folder: folders are UTC dates and a New Zealand day spans two.
   const files = (await readdir(root, { recursive: true }))
     .filter((path) => path.endsWith('.pb.gz'))
@@ -23,9 +26,24 @@ export async function actualCalls(index: StaticIndex, root: string, from: number
     .sort((a, b) => a.at - b.at);
 
   const groups = new Map<string, Fix[]>();
+  const observed = new Map<string, Observed>();
   for (const { path } of files) {
     const feed = bindings.transit_realtime.FeedMessage.decode(gunzipSync(await readFile(join(root, path))));
-    for (const { vehicle } of feed.entity) {
+    const made = Number(feed.header.timestamp);
+    for (const { vehicle, tripUpdate } of feed.entity) {
+      const trip = tripUpdate?.trip;
+      if (trip?.tripId && trip.startDate === index.day && index.trips.has(trip.tripId)) {
+        for (const update of tripUpdate!.stopTimeUpdate ?? []) {
+          const key = `${trip.tripId}|${index.day}|${update.stopSequence}`;
+          for (const kind of ['arrival', 'departure'] as const) {
+            const ev = update[kind];
+            // An observation, not a prediction: no uncertainty (unset decodes as 0) and not after the snapshot was made.
+            // A later snapshot's replaces an earlier one's, because AT revises them.
+            if (!ev || ev.uncertainty !== 0 || !Number(ev.time) || Number(ev.time) > made) continue;
+            (observed.get(key) ?? observed.set(key, {}).get(key)!)[kind] = Number(ev.time) * 1000;
+          }
+        }
+      }
       // A missing trip_id decodes as '', and a missing timestamp as 0.
       const tripId = vehicle?.trip?.tripId;
       const at = Number(vehicle?.timestamp) * 1000;
@@ -41,7 +59,8 @@ export async function actualCalls(index: StaticIndex, root: string, from: number
     const [tripId, startDate, vehicleId] = key.split('|');
     for (const { stopId, stopSequence, at } of callsOf(index, tripId, fixes)) calls.push({ tripId, startDate, vehicleId, stopId, stopSequence, at });
   }
-  return { calls: calls.sort((a, b) => a.at - b.at || a.tripId.localeCompare(b.tripId) || a.stopSequence - b.stopSequence) };
+  calls.sort((a, b) => a.at - b.at || a.tripId.localeCompare(b.tripId) || a.stopSequence - b.stopSequence);
+  return { calls, observed };
 }
 
 const M_PER_DEGREE = 6_371_000 * (Math.PI / 180);
