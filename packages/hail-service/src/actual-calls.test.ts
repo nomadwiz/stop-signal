@@ -136,6 +136,39 @@ describe('actualCalls', () => {
     expect(Math.abs(calls[0].at - (T + 20) * 1000)).toBeLessThanOrEqual(1000);
   });
 
+  it('ignores a record with no timestamp', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'calls-'));
+    const untimed = fix('T-weekday', [-100, 0, 'A', T]);
+    delete (untimed.vehicle as { timestamp?: number }).timestamp;
+    await snapshot(root, (T + 5) * 1000, [untimed]);
+    await snapshot(root, (T + 25) * 1000, [fix('T-weekday', [100, 0, 'A', T + 20])]);
+
+    const { calls } = await actualCalls(index, root, FROM, TO);
+
+    expect(calls).toEqual([]);
+  });
+
+  it('times a call on a vehicle waiting at the stop, which repeats its position under new timestamps', async () => {
+    const root = await drive('T-weekday', [[0, 0, 'A', T], [0, 0, 'A', T + 20], [100, 0, 'A', T + 40]]);
+
+    const { calls } = await actualCalls(index, root, FROM, TO);
+
+    expect(calls.map((c) => c.at)).toEqual([T * 1000]);
+  });
+
+  it('skips a timetabled stop missing from stops.txt and still finds the stops after it', async () => {
+    const withoutB = { ...index, stops: new Map([...index.stops].filter(([id]) => id !== 'B')) };
+    const root = await drive('T-weekday', [
+      [-100, 0, 'A', T], [100, 0, 'A', T + 20],
+      [-100, 0, 'B', T + 600], [100, 0, 'B', T + 620],
+      [-100, 0, 'C', T + 1200], [100, 0, 'C', T + 1220],
+    ]);
+
+    const { calls } = await actualCalls(withoutB, root, FROM, TO);
+
+    expect(seqs(calls)).toEqual([1, 10]);
+  });
+
   it('keeps vehicles on the same trip apart, whatever their ids hold, and sorts the calls by time', async () => {
     const root = await mkdtemp(join(tmpdir(), 'calls-'));
     await snapshot(root, (T + 5) * 1000, [fix('T-weekday', [-100, 0, 'B', T]), fix('T-weekday', [-100, 0, 'A', T - 60], { vehicleId: 'V|2' })]);
@@ -173,6 +206,16 @@ describe("actualCalls' observed events", () => {
     const { observed } = await actualCalls(index, root, FROM, TO);
 
     expect(observed.get(key(2))).toEqual({ arrival: (T + 8) * 1000 });
+  });
+
+  it('ignores an update with no time, and one for a trip started on another day', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'calls-'));
+    const otherDay = { id: 'other day', tripUpdate: { trip: { tripId: 'T-weekday', startDate: '20261006' }, stopTimeUpdate: [{ stopSequence: 2, arrival: { time: T } }] } };
+    await snapshot(root, (T + 100) * 1000, [update(2, { delay: 30 }), otherDay]);
+
+    const { observed } = await actualCalls(index, root, FROM, TO);
+
+    expect(observed.size).toBe(0);
   });
 
   it('ignores a prediction: a time carrying uncertainty, or one after the snapshot was made', async () => {
