@@ -102,40 +102,29 @@ function callsOf(index: StaticIndex, tripId: string, unsorted: Fix[]): { stopId:
   const xy = (lat: number, lon: number) => [(lon - fixes[0].lon) * kx, (lat - lat0) * M_PER_DEGREE];
   const points = fixes.map((f) => xy(f.lat, f.lon));
 
-  // near[k][i]: where line i, from fix i to fix i + 1, comes closest to the trip's k-th stop.
-  const stops = index.trips.get(tripId)!.stopTimes.flatMap(({ stopId, sequence }) => {
-    const stop = index.stops.get(stopId);
-    if (!stop) return [];
-    const [sx, sy] = xy(stop.lat, stop.lon);
-    return [{ stopId, sequence, near: points.slice(1).map((b, i) => closest(sx, sy, points[i], b)) }];
-  });
-  const within = (k: number, i: number) => i >= 0 && i < points.length - 1 && stops[k].near[i].d <= CALL_RADIUS_M;
-
+  // The first line, from one fix to the next, that passes within the radius decides the call, timed at its point
+  // nearest the stop, and each stop is searched for from the line that matched the stop before it.
+  // The line passing nearest the stop was measured on Friday 13:00–16:00 and rejected: 88.2% within 20 s against
+  // 96.7%, and 80.3% at stops where AT gave an arrival time, because GPS jitter while the bus waits at the stop moves
+  // the nearest fix to partway through the wait.
+  // ponytail: forward-only, so a stop matched too far along leaves the stops after it behind the cursor; about 2,000
+  // stops on Friday came within the radius only there. Bounding each match by where any later stop is first reached
+  // was measured and rejected: a vehicle carries its next trip_id while finishing the previous trip, passing that
+  // trip's later stops first, and never-found stops rose from 1,963 to 5,110. Upgrade: a window around each stop's
+  // scheduled time, not yet evaluated.
   const found = [];
   let cursor = 0;
-  for (const [k, { stopId, sequence, near }] of stops.entries()) {
-    let start = cursor;
-    while (start < near.length && !within(k, start)) start++;
-    if (start === near.length) continue;
-    // Skip-ahead guard: a stop missed on its own pass (a gap in the fixes) must not match where the vehicle passes
-    // it again later, such as running back along the route still carrying the trip_id, because every stop after it
-    // would then be searched for beyond that point. So the match must begin no later than the first line that
-    // enters the radius of any later stop. A later stop already in range at the cursor is not entering it: that is
-    // the stop just matched, or a loop's terminus seen again.
-    let bound = Infinity;
-    for (let m = k + 1; m < stops.length; m++) {
-      for (let i = cursor + 1; i < bound; i++) {
-        if (i >= near.length) break;
-        if (within(m, i) && !within(m, i - 1)) bound = i;
-      }
+  for (const { stopId, sequence } of index.trips.get(tripId)!.stopTimes) {
+    const stop = index.stops.get(stopId);
+    if (!stop) continue;
+    const [sx, sy] = xy(stop.lat, stop.lon);
+    for (let i = cursor; i < points.length - 1; i++) {
+      const { d, f } = closest(sx, sy, points[i], points[i + 1]);
+      if (d > CALL_RADIUS_M) continue;
+      found.push({ stopId, stopSequence: sequence, at: Math.round(fixes[i].at + f * (fixes[i + 1].at - fixes[i].at)) });
+      cursor = i;
+      break;
     }
-    if (start > bound) continue;
-    // Of the lines in that first stretch within the radius, the one passing nearest the stop: the first line in
-    // range often grazes its edge while the vehicle stops on the next.
-    let best = start;
-    for (let i = start + 1; within(k, i); i++) if (near[i].d < near[best].d) best = i;
-    found.push({ stopId, stopSequence: sequence, at: Math.round(fixes[best].at + near[best].f * (fixes[best + 1].at - fixes[best].at)) });
-    cursor = best;
   }
   return found;
 }
