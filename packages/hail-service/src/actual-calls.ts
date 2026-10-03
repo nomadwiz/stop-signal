@@ -80,7 +80,8 @@ export interface Gap extends Call { basis: 'arrival' | 'departure'; observed: nu
 
 // Checks the calls against AT's observed times: the arrival where AT recorded one, else the departure. Each trip's
 // first stop is left out, since a vehicle waits there before its trip starts. neverFound lists, as observed's keys,
-// the stops AT observed on a trip the vehicle was tracked on that no call was derived for.
+// the stops AT observed that no call was derived for, on trips with at least one call; a trip with positions but no
+// call at all does not count.
 export function agreement(calls: Call[], observed: Map<string, Observed>, toleranceMs: number, index: StaticIndex): { gaps: Gap[]; neverFound: string[]; share: number } {
   const first = (tripId: string) => index.trips.get(tripId)?.stopTimes[0]?.sequence;
   const gaps: Gap[] = [];
@@ -114,14 +115,14 @@ type Row = Omit<Gap, 'at' | 'gap'> & Partial<Pick<Gap, 'at' | 'gap'>>;
 export function report(calls: Call[], observed: Map<string, Observed>, index: StaticIndex, tripIds: string[]): string {
   const named = new Set(tripIds);
   const mine = calls.filter((c) => named.has(c.tripId));
-  const theirs = new Map([...observed].filter(([key]) => named.has(key.split('|')[0])));
-  const { gaps, neverFound } = agreement(mine, theirs, TOLERANCE_MS, index);
+  // Both gaps and neverFound reach only trips with a call, so observed needs no filtering to the trips named.
+  const { gaps, neverFound } = agreement(mine, observed, TOLERANCE_MS, index);
   const rows: Row[] = [
     ...gaps,
     ...neverFound.map((key): Row => {
       const [tripId, startDate, sequence] = key.split('|');
       const stopSequence = Number(sequence);
-      const o = theirs.get(key)!;
+      const o = observed.get(key)!;
       const stopId = index.trips.get(tripId)?.stopTimes.find((st) => st.sequence === stopSequence)?.stopId ?? '?';
       return { tripId, startDate, vehicleId: '', stopId, stopSequence, observed: (o.arrival ?? o.departure)!, basis: o.arrival === undefined ? 'departure' : 'arrival' };
     }),
