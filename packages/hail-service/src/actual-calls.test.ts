@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 import bindings from 'gtfs-realtime-bindings';
 import { describe, expect, it } from 'vitest';
-import { actualCalls } from './actual-calls.ts';
+import { actualCalls, agreement, type Call, type Observed } from './actual-calls.ts';
 import { loadServiceDay } from './gtfs-static.ts';
 
 const { FeedMessage } = bindings.transit_realtime;
@@ -196,5 +196,55 @@ describe("actualCalls' observed events", () => {
     const { observed } = await actualCalls(index, root, FROM, TO);
 
     expect(observed.size).toBe(0);
+  });
+});
+
+describe('agreement', () => {
+  const call = (tripId: string, stopSequence: number, at: number): Call => ({ tripId, startDate: DAY, vehicleId: 'V1', stopId: 'X', stopSequence, at });
+  const observedAt = (entries: [string, number, Observed][]) => new Map(entries.map(([tripId, seq, o]) => [`${tripId}|${DAY}|${seq}`, o]));
+
+  it('compares each call with the observed arrival, else the observed departure, and skips the first stop', () => {
+    const calls = [call('T-weekday', 1, 1_000), call('T-weekday', 2, 50_000), call('T-weekday', 10, 90_000)];
+    const observed = observedAt([
+      ['T-weekday', 1, { arrival: 1_000 }],
+      ['T-weekday', 2, { arrival: 45_000, departure: 60_000 }],
+      ['T-weekday', 10, { departure: 120_000 }],
+    ]);
+
+    const { gaps } = agreement(calls, observed, 20_000, index);
+
+    expect(gaps.map(({ stopSequence, basis, observed, gap }) => ({ stopSequence, basis, observed, gap }))).toEqual([
+      { stopSequence: 2, basis: 'arrival', observed: 45_000, gap: 5_000 },
+      { stopSequence: 10, basis: 'departure', observed: 120_000, gap: -30_000 },
+    ]);
+  });
+
+  it('gives the share of compared stops within the tolerance, inclusive', () => {
+    const calls = [call('T-weekday', 2, 20_000), call('T-weekday', 10, 100_000), call('T-event', 2, 0), call('T-event', 3, 0)];
+    const observed = observedAt([
+      ['T-weekday', 2, { arrival: 0 }],
+      ['T-weekday', 10, { arrival: 120_001 }],
+      ['T-event', 2, { arrival: -19_000 }],
+    ]);
+
+    const { gaps, share } = agreement(calls, observed, 20_000, index);
+
+    expect(gaps).toHaveLength(3);
+    expect(share).toBeCloseTo(2 / 3);
+  });
+
+  it("lists the observed stops no call was found for, on trips the vehicle was tracked on, past the first stop", () => {
+    const calls = [call('T-weekday', 2, 0)];
+    const observed = observedAt([
+      ['T-weekday', 1, { departure: 0 }],
+      ['T-weekday', 2, { arrival: 0 }],
+      ['T-weekday', 10, { arrival: 0 }],
+      // No vehicle positions for this trip at all, so nothing was searched for.
+      ['T-event', 2, { arrival: 0 }],
+    ]);
+
+    const { neverFound } = agreement(calls, observed, 20_000, index);
+
+    expect(neverFound).toEqual([`T-weekday|${DAY}|10`]);
   });
 });
