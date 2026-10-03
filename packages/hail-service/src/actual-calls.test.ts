@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 import bindings from 'gtfs-realtime-bindings';
 import { describe, expect, it } from 'vitest';
-import { actualCalls, agreement, type Call, type Observed } from './actual-calls.ts';
+import { actualCalls, agreement, report, type Call, type Observed } from './actual-calls.ts';
 import { loadServiceDay } from './gtfs-static.ts';
 
 const { FeedMessage } = bindings.transit_realtime;
@@ -232,5 +232,35 @@ describe('agreement', () => {
     const { neverFound } = agreement(calls, observed, 20_000, index);
 
     expect(neverFound).toEqual([`T-weekday|${DAY}|10`]);
+  });
+});
+
+describe('report', () => {
+  // 07:12:30 NZDT on 05-10-2026, T-weekday's timetabled call at B.
+  const B_AT = Date.UTC(2026, 9, 4, 18, 12, 30);
+  const call = (stopId: string, stopSequence: number, at: number): Call => ({ tripId: 'T-weekday', startDate: DAY, vehicleId: 'V1', stopId, stopSequence, at });
+
+  it('tables each stop of the trips named, gives the shares within 20 s and 30 s, and lists every miss', () => {
+    const calls = [call('A', 1, B_AT - 750_000), call('B', 2, B_AT + 25_000)];
+    const observed = new Map<string, Observed>([
+      [`T-weekday|${DAY}|1`, { departure: B_AT - 750_000 }],
+      [`T-weekday|${DAY}|2`, { arrival: B_AT }],
+      [`T-weekday|${DAY}|10`, { departure: B_AT + 1_200_000 }],
+    ]);
+
+    expect(report(calls, observed, index, ['T-weekday']).split('\n')).toEqual([
+      '| Trip | Seq | Stop | Derived (NZ) | Observed (NZ) | Basis | Gap (s) |',
+      '| --- | --- | --- | --- | --- | --- | --- |',
+      '| T-weekday | 2 | B | 07:12:55 | 07:12:30 | arrival | +25.0 |',
+      '| T-weekday | 10 | C | never found | 07:32:30 | departure | — |',
+      '',
+      'Within 20 s: 0 / 1 compared = 0.0%',
+      'Within 30 s: 1 / 1 compared = 100.0%',
+      'Never found: 1',
+      '',
+      'Misses beyond 20 s or never found:',
+      '- T-weekday seq 2 (B): +25.0 s against the observed arrival',
+      '- T-weekday seq 10 (C): never found',
+    ]);
   });
 });
