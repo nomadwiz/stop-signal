@@ -136,14 +136,14 @@ describe('actualCalls', () => {
     expect(Math.abs(calls[0].at - (T + 20) * 1000)).toBeLessThanOrEqual(1000);
   });
 
-  it('keeps vehicles on the same trip apart, and sorts the calls by time', async () => {
+  it('keeps vehicles on the same trip apart, whatever their ids hold, and sorts the calls by time', async () => {
     const root = await mkdtemp(join(tmpdir(), 'calls-'));
-    await snapshot(root, (T + 5) * 1000, [fix('T-weekday', [-100, 0, 'B', T]), fix('T-weekday', [-100, 0, 'A', T - 60], { vehicleId: 'V2' })]);
-    await snapshot(root, (T + 25) * 1000, [fix('T-weekday', [100, 0, 'B', T + 20]), fix('T-weekday', [100, 0, 'A', T - 40], { vehicleId: 'V2' })]);
+    await snapshot(root, (T + 5) * 1000, [fix('T-weekday', [-100, 0, 'B', T]), fix('T-weekday', [-100, 0, 'A', T - 60], { vehicleId: 'V|2' })]);
+    await snapshot(root, (T + 25) * 1000, [fix('T-weekday', [100, 0, 'B', T + 20]), fix('T-weekday', [100, 0, 'A', T - 40], { vehicleId: 'V|2' })]);
 
     const { calls } = await actualCalls(index, root, FROM, TO);
 
-    expect(calls.map((c) => [c.vehicleId, c.stopId])).toEqual([['V2', 'A'], ['V1', 'B']]);
+    expect(calls.map((c) => [c.vehicleId, c.stopId])).toEqual([['V|2', 'A'], ['V1', 'B']]);
   });
 });
 
