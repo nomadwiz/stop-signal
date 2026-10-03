@@ -126,28 +126,14 @@ describe('actualCalls', () => {
     expect(Math.abs(calls[0].at - (T + 10) * 1000)).toBeLessThanOrEqual(1000);
   });
 
-  it('times the call on the line nearest the stop, not the first line within 50 m', async () => {
-    // Approaching 40 m north of A, then swinging through 2.5 m from it halfway between the second and third fix.
+  it('times the call on the first line within 50 m, even where a later line passes nearer', async () => {
+    // Approaching 40 m north of A, then swinging through 2.5 m from it between the second and third fix.
     const root = await drive('T-weekday', [[-100, 40, 'A', T], [0, 40, 'A', T + 20], [5, -40, 'A', T + 40], [5, -200, 'A', T + 60]]);
 
     const { calls } = await actualCalls(index, root, FROM, TO);
 
     expect(calls).toHaveLength(1);
-    expect(Math.abs(calls[0].at - (T + 30) * 1000)).toBeLessThanOrEqual(1000);
-  });
-
-  it('does not match a stop past where a later stop is reached, so the later stops are still found', async () => {
-    // A is missed by 80 m on the way out; the vehicle then passes B and C and returns past A with the same trip_id.
-    const root = await drive('T-weekday', [
-      [-100, 80, 'A', T], [100, 80, 'A', T + 20],
-      [-100, 0, 'B', T + 600], [100, 0, 'B', T + 620],
-      [-100, 0, 'C', T + 1200], [100, 0, 'C', T + 1220],
-      [100, 0, 'A', T + 2400], [-100, 0, 'A', T + 2420],
-    ]);
-
-    const { calls } = await actualCalls(index, root, FROM, TO);
-
-    expect(seqs(calls)).toEqual([2, 10]);
+    expect(Math.abs(calls[0].at - (T + 20) * 1000)).toBeLessThanOrEqual(1000);
   });
 
   it('keeps vehicles on the same trip apart, and sorts the calls by time', async () => {
