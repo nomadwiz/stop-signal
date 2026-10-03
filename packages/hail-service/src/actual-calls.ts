@@ -1,13 +1,24 @@
 // C7: derives after the fact when each vehicle actually called at each stop of its trip, from the
 // archived vehicle positions alone (#14, S9, QR2). This is the correctness oracle the M1 measurement reads.
+// AT's observed times from its trip updates are read only to check the calls against, never as the oracle.
+//
+// Usage: node packages/hail-service/src/actual-calls.ts <gtfs.zip> <YYYYMMDD> <archive root> <from-ms> <to-ms> [trip_id,…]
+//   Reads every <root>/*/<epoch-ms>.pb.gz with from-ms <= epoch-ms < to-ms, for the trips of that one service day.
+//   With no trip_ids, prints every call as JSON Lines: {tripId, startDate, vehicleId, stopId, stopSequence, at}.
+//   With trip_ids, prints a markdown table of each stop's gap from AT's observed time, the shares within
+//   20 s and 30 s, and every miss.
+import { realpathSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { gunzipSync } from 'node:zlib';
 import bindings from 'gtfs-realtime-bindings';
-import type { StaticIndex } from './gtfs-static.ts';
+import { loadServiceDay, type StaticIndex } from './gtfs-static.ts';
 
 // Calibration value: how close a vehicle's path must come to a stop to count as calling there.
 export const CALL_RADIUS_M = 50;
+// One capture poll: a call agrees with AT's observed time when within this.
+export const TOLERANCE_MS = 20_000;
 
 // at: epoch ms at which the vehicle reached the stop.
 export interface Call { tripId: string; startDate: string; vehicleId: string; stopId: string; stopSequence: number; at: number }
@@ -91,6 +102,45 @@ export function agreement(calls: Call[], observed: Map<string, Observed>, tolera
   return { gaps, neverFound, share: gaps.length ? within / gaps.length : NaN };
 }
 
+const nzTime = new Intl.DateTimeFormat('en-NZ', { timeZone: 'Pacific/Auckland', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+const fraction = (part: number, whole: number) => `${part} / ${whole} compared = ${whole ? ((100 * part) / whole).toFixed(1) : '—'}%`;
+const seconds = (ms: number) => `${ms >= 0 ? '+' : ''}${(ms / 1000).toFixed(1)}`;
+
+// A row of the report; at and gap are absent for a stop never found.
+interface Row { tripId: string; seq: number; stopId: string; at?: number; observed: number; basis: Gap['basis']; gap?: number }
+
+// The markdown the CLI prints for the trips named: a row per stop compared or never found, past each trip's first stop.
+export function report(calls: Call[], observed: Map<string, Observed>, index: StaticIndex, tripIds: string[]): string {
+  const named = new Set(tripIds);
+  const mine = calls.filter((c) => named.has(c.tripId));
+  const theirs = new Map([...observed].filter(([key]) => named.has(key.split('|')[0])));
+  const { gaps, neverFound } = agreement(mine, theirs, TOLERANCE_MS, index);
+  const rows: Row[] = [
+    ...gaps.map((g) => ({ tripId: g.tripId, seq: g.stopSequence, stopId: g.stopId, at: g.at, observed: g.observed, basis: g.basis, gap: g.gap })),
+    ...neverFound.map((key): Row => {
+      const [tripId, , sequence] = key.split('|');
+      const o = theirs.get(key)!;
+      const stopId = index.trips.get(tripId)?.stopTimes.find((st) => st.sequence === Number(sequence))?.stopId ?? '?';
+      return { tripId, seq: Number(sequence), stopId, observed: (o.arrival ?? o.departure)!, basis: o.arrival === undefined ? 'departure' : 'arrival' };
+    }),
+  ].sort((a, b) => tripIds.indexOf(a.tripId) - tripIds.indexOf(b.tripId) || a.seq - b.seq);
+
+  const within = (ms: number) => gaps.filter((g) => Math.abs(g.gap) <= ms).length;
+  const misses = rows.filter((r) => r.gap === undefined || Math.abs(r.gap) > TOLERANCE_MS);
+  return [
+    '| Trip | Seq | Stop | Derived (NZ) | Observed (NZ) | Basis | Gap (s) |',
+    '| --- | --- | --- | --- | --- | --- | --- |',
+    ...rows.map((r) => `| ${r.tripId} | ${r.seq} | ${r.stopId} | ${r.at === undefined ? 'never found' : nzTime.format(r.at)} | ${nzTime.format(r.observed)} | ${r.basis} | ${r.gap === undefined ? '—' : seconds(r.gap)} |`),
+    '',
+    `Within 20 s: ${fraction(within(TOLERANCE_MS), gaps.length)}`,
+    `Within 30 s: ${fraction(within(30_000), gaps.length)}`,
+    `Never found: ${neverFound.length}`,
+    '',
+    'Misses beyond 20 s or never found:',
+    ...misses.map((r) => `- ${r.tripId} seq ${r.seq} (${r.stopId}): ${r.gap === undefined ? 'never found' : `${seconds(r.gap)} s against the observed ${r.basis}`}`),
+  ].join('\n');
+}
+
 const M_PER_DEGREE = 6_371_000 * (Math.PI / 180);
 
 function callsOf(index: StaticIndex, tripId: string, unsorted: Fix[]): { stopId: string; stopSequence: number; at: number }[] {
@@ -136,4 +186,16 @@ function closest(x: number, y: number, [ax, ay]: number[], [bx, by]: number[]): 
   const length2 = dx * dx + dy * dy;
   const f = length2 ? Math.min(1, Math.max(0, ((x - ax) * dx + (y - ay) * dy) / length2)) : 0;
   return { d: Math.hypot(ax + f * dx - x, ay + f * dy - y), f };
+}
+
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const [zipPath, day, root, from, to, tripList] = process.argv.slice(2);
+  if (!zipPath || !day || !root || !from || !to) {
+    console.error('Usage: node packages/hail-service/src/actual-calls.ts <gtfs.zip> <YYYYMMDD> <archive root> <from-ms> <to-ms> [trip_id,…]');
+    process.exit(1);
+  }
+  const index = await loadServiceDay(zipPath, day);
+  const { calls, observed } = await actualCalls(index, root, Number(from), Number(to));
+  if (tripList) console.log(report(calls, observed, index, tripList.split(',')));
+  else for (const call of calls) console.log(JSON.stringify(call));
 }
