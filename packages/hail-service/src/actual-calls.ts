@@ -63,6 +63,34 @@ export async function actualCalls(index: StaticIndex, root: string, from: number
   return { calls, observed };
 }
 
+// gap: the call's time minus AT's observed time at that stop, ms; basis says which observed time.
+export interface Gap extends Call { basis: 'arrival' | 'departure'; observed: number; gap: number }
+
+// Checks the calls against AT's observed times: the arrival where AT recorded one, else the departure. Each trip's
+// first stop is left out, since a vehicle waits there before its trip starts. neverFound lists, as observed's keys,
+// the stops AT observed on a trip the vehicle was tracked on that no call was derived for.
+export function agreement(calls: Call[], observed: Map<string, Observed>, toleranceMs: number, index: StaticIndex): { gaps: Gap[]; neverFound: string[]; share: number } {
+  const first = (tripId: string) => index.trips.get(tripId)?.stopTimes[0]?.sequence;
+  const gaps: Gap[] = [];
+  const found = new Set<string>();
+  const tracked = new Set<string>();
+  for (const c of calls) {
+    const key = `${c.tripId}|${c.startDate}|${c.stopSequence}`;
+    found.add(key);
+    tracked.add(`${c.tripId}|${c.startDate}`);
+    const o = observed.get(key);
+    const at = o?.arrival ?? o?.departure;
+    if (at === undefined || c.stopSequence === first(c.tripId)) continue;
+    gaps.push({ ...c, basis: o?.arrival === undefined ? 'departure' : 'arrival', observed: at, gap: c.at - at });
+  }
+  const neverFound = [...observed.keys()].filter((key) => {
+    const [tripId, startDate, sequence] = key.split('|');
+    return !found.has(key) && tracked.has(`${tripId}|${startDate}`) && Number(sequence) !== first(tripId);
+  });
+  const within = gaps.filter((g) => Math.abs(g.gap) <= toleranceMs).length;
+  return { gaps, neverFound, share: gaps.length ? within / gaps.length : NaN };
+}
+
 const M_PER_DEGREE = 6_371_000 * (Math.PI / 180);
 
 function callsOf(index: StaticIndex, tripId: string, unsorted: Fix[]): { stopId: string; stopSequence: number; at: number }[] {
