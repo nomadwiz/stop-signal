@@ -21,7 +21,6 @@ import { GTFS_URL, loadServiceDay, zipRows } from './gtfs-static.ts';
 
 const { FeedMessage } = bindings.transit_realtime;
 const BUCKET = 'stopsignal-archive-995583236543';
-const CUT_RULE = "Every trip update whose trip calls at the stop; every vehicle whose trip calls at the stop or that one of those trip updates names; and every other trip update that names a kept vehicle (ADR-030).";
 
 // The feed cut to trips, keeping what the resolver, the trip-update join (ADR-019, ADR-024) and the oracle read for the
 // stop, in the feed's own order. Trip updates naming a kept vehicle stay whatever their trip, so ADR-024 sees every name.
@@ -88,16 +87,11 @@ function zip(files: [string, string][]): Buffer {
     local.writeUInt32LE(packed.length, 18);
     local.writeUInt32LE(data.length, 22);
     local.writeUInt16LE(name.length, 26);
+    // A central entry repeats the local header from its version needed to its extra length, 6 bytes further on.
     const entry = Buffer.alloc(46);
     entry.writeUInt32LE(0x02014b50, 0);
     entry.writeUInt16LE(20, 4);
-    entry.writeUInt16LE(20, 6);
-    entry.writeUInt16LE(8, 10);
-    entry.writeUInt16LE(0x21, 14);
-    entry.writeUInt32LE(crc32(data), 16);
-    entry.writeUInt32LE(packed.length, 20);
-    entry.writeUInt32LE(data.length, 24);
-    entry.writeUInt16LE(name.length, 28);
+    local.copy(entry, 6, 4);
     entry.writeUInt32LE(offset, 42);
     parts.push(local, name, packed);
     central.push(entry, name);
@@ -151,13 +145,14 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
     objects.push({ key: `raw/${path}`, size: source.length, sha256: hash('sha256', source), md5: hash('md5', source), fixture, fixtureSha256: hash('sha256', cut) });
   }
   const kept = timetableTrips(trips, cuts);
+  const timetableSource = await readFile(zipPath);
   const timetable = await cutTimetable(zipPath, kept);
   await writeFile(join(out, 'gtfs.zip'), timetable);
   bytes += timetable.length;
   const manifest = {
-    bucket: BUCKET, stopId, day, from: Number(from), to: Number(to), cut: CUT_RULE, objects,
+    bucket: BUCKET, stopId, day, from: Number(from), to: Number(to), cut: "Every trip update whose trip calls at the stop; every vehicle whose trip calls at the stop or that one of those trip updates names; and every other trip update that names a kept vehicle (ADR-030).", objects,
     timetable: {
-      source: GTFS_URL, sha256: hash('sha256', await readFile(zipPath)),
+      source: GTFS_URL, size: timetableSource.length, sha256: hash('sha256', timetableSource), md5: hash('md5', timetableSource),
       trips: `Every trip in tripsAtStop(${stopId}) for ${day}, the previous day's late trips included, and every trip a kept trip update names, with the shapes, routes, stops and services they use.`,
       fixture: 'gtfs.zip', fixtureSha256: hash('sha256', timetable),
     },
