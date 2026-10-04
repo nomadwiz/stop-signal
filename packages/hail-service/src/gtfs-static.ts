@@ -1,10 +1,12 @@
-// C7: loads AT's GTFS static timetable for one service day into an in-memory index (#19, FR5).
+// C7: loads AT's GTFS static timetable for one service day, and the previous day's trips that run past
+// midnight into it, into an in-memory index (#19, #102, FR5, ADR-020).
 // No dependency: zip entries are found through the central directory and inflated with node:zlib
 // (ADR-015 decision 6). Only this module knows the wire format; hail-core never imports it.
 //
 // Usage: node --expose-gc packages/hail-service/src/gtfs-static.ts <gtfs.zip> <YYYYMMDD>
 //   Downloads AT's feed to <gtfs.zip> first if no file is there, loads that day, and prints the
-//   counts kept and the heap the index holds, which is budget B4's measure (≤ 50 MB base).
+//   counts kept, the late trips and how many of them also run that day, and the heap the index holds,
+//   which is budget B4's measure (≤ 50 MB base).
 import { createReadStream, createWriteStream, existsSync, realpathSync } from 'node:fs';
 import { open, rename } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
@@ -275,5 +277,7 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
   for (const trip of index.trips.values()) stopTimes += trip.stopTimes.length;
   for (const points of index.shapes.values()) shapePoints += points.length;
   console.log(`day ${day}: ${index.trips.size} trips, ${stopTimes} stop times, ${index.shapes.size} shapes (${shapePoints} points), ${index.stops.size} stops, ${index.routes.size} routes`);
+  const shared = [...index.lateTrips.keys()].filter((id) => index.trips.has(id)).length;
+  console.log(`late trips from ${index.previousDay}: ${index.lateTrips.size}, of which ${shared} also run on ${day}`);
   console.log(`heap held by the index: ${(held / 1024 / 1024).toFixed(1)} MB (B4: ≤ 50 MB base)`);
 }
