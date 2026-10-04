@@ -108,27 +108,12 @@ describe('scheduler', () => {
     wakeups.at(100, 'wakeup');
     wakeups.at(101, 'not yet');
 
+    // Detached, as an adapter is handed it.
+    const { submit } = wakeups;
     now = 100;
-    wakeups.submit('tick');
+    submit('tick');
 
     expect(fired).toEqual(['wakeup', 'tick']);
-  });
-
-  it('loses no submitted event when applying a wakeup due before it throws', () => {
-    let now = 0;
-    const fired: string[] = [];
-    const enqueue = eventLoop<string>((event) => {
-      if (event === 'bad') throw new Error('bad wakeup');
-      fired.push(event);
-    });
-    const wakeups = scheduler({ now: () => now }, enqueue);
-    wakeups.at(100, 'bad');
-
-    now = 100;
-    expect(() => wakeups.submit('ack')).toThrow('bad wakeup');
-    wakeups.submit('tick');
-
-    expect(fired).toEqual(['ack', 'tick']);
   });
 
   it('refuses a wakeup whose time is not a number, which no Clock reading could ever reach', () => {

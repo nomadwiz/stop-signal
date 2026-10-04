@@ -29,11 +29,13 @@ export function eventLoop<E>(apply: (event: E, seq: number) => void): (...events
 // first, so queue order never contradicts clock order, and a wakeup at t beats an event arriving at t.
 export function scheduler<E>(clock: Clock, enqueue: (...events: E[]) => void) {
   let pending: { at: number; event: E }[] = [];
-  const takeDue = (): E[] => {
+  // A closure, not a method, so submit and wake still work when an adapter passes them on detached.
+  const wake = (): void => {
     const now = clock.now();
     const due = pending.filter((w) => w.at <= now).sort((a, b) => a.at - b.at);
     pending = pending.filter((w) => w.at > now);
-    return due.map((w) => w.event);
+    // One call, so a throw while applying one due wakeup cannot drop the ones after it.
+    enqueue(...due.map((w) => w.event));
   };
   return {
     at(at: number, event: E): void {
@@ -41,12 +43,12 @@ export function scheduler<E>(clock: Clock, enqueue: (...events: E[]) => void) {
       if (Number.isNaN(at)) throw new RangeError('a wakeup needs a time the Clock can reach');
       pending.push({ at, event });
     },
-    // One enqueue call each, so a throw while applying one due wakeup cannot drop what follows it.
-    wake(): void {
-      enqueue(...takeDue());
-    },
+    wake,
+    // ponytail: ADR-028's form. A due wakeup that throws stops submit before the event is enqueued; the throw
+    // reaches the caller, and the event is gone. Enqueue both in one call if a caller ever needs the event kept.
     submit(event: E): void {
-      enqueue(...takeDue(), event);
+      wake();
+      enqueue(event);
     },
   };
 }
