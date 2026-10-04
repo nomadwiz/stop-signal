@@ -6,7 +6,8 @@
 // then:
 //   node packages/hail-service/src/cut-fixtures.ts <gtfs.zip> <YYYYMMDD> <stop_id> <archive root> <from-ms> <to-ms>
 //   Cuts every <root>/<UTC date>/<epoch-ms>.pb.gz with from-ms <= epoch-ms < to-ms to the trips that call at stop_id that
-//   service day (cutFeed), and the timetable to the same trips (cutTimetable), then writes packages/replay/fixtures/:
+//   service day (cutFeed), and the timetable to those trips and every trip a kept trip update names (timetableTrips,
+//   cutTimetable), then writes packages/replay/fixtures/:
 //   snapshots/<epoch-ms>.pb.gz, gtfs.zip, and manifest.json naming each source object's S3 key, size, SHA-256 and MD5.
 //   <archive root> must be a copy of raw/ as synced: the manifest is what the owner checks against S3.
 import { createHash } from 'node:crypto';
@@ -32,6 +33,14 @@ export function cutFeed(feed: transit_realtime.FeedMessage, trips: Set<string>):
   const kept = ids([...vehicles].map((e) => e.vehicle!.vehicle));
   const entity = feed.entity.filter((e) => vehicles.has(e) || (e.tripUpdate && (trips.has(e.tripUpdate.trip.tripId ?? '') || kept.has(e.tripUpdate.vehicle?.id ?? ''))));
   return FeedMessage.create({ header: feed.header, entity });
+}
+
+// The corridor's trips and every trip a kept trip update names. The trip-update join counts an update only if its trip
+// is in the timetable, so without the named trips it would recover vehicles that ADR-024 leaves out (ADR-030).
+export function timetableTrips(trips: Set<string>, cuts: transit_realtime.FeedMessage[]): Set<string> {
+  const all = new Set(trips);
+  for (const cut of cuts) for (const e of cut.entity) if (e.tripUpdate?.trip.tripId) all.add(e.tripUpdate.trip.tripId);
+  return all;
 }
 
 // The files loadServiceDay reads, in the order each one's keys come from the files before it.
@@ -127,26 +136,30 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
     .filter((path) => path.endsWith('.pb.gz') && Number(from) <= Number(basename(path, '.pb.gz')) && Number(basename(path, '.pb.gz')) < Number(to))
     .sort((a, b) => Number(basename(a, '.pb.gz')) - Number(basename(b, '.pb.gz')));
   const objects = [];
+  const cuts = [];
   let bytes = 0;
   for (const path of paths) {
     const source = await readFile(join(root, path));
-    const cut = gzipSync(FeedMessage.encode(cutFeed(FeedMessage.decode(gunzipSync(source)), trips)).finish());
+    const feed = cutFeed(FeedMessage.decode(gunzipSync(source)), trips);
+    cuts.push(feed);
+    const cut = gzipSync(FeedMessage.encode(feed).finish());
     const fixture = `snapshots/${basename(path)}`;
     await writeFile(join(out, fixture), cut);
     bytes += cut.length;
     objects.push({ key: `raw/${path.split('\\').join('/')}`, size: source.length, sha256: hash('sha256', source), md5: hash('md5', source), fixture, fixtureSha256: hash('sha256', cut) });
   }
-  const timetable = await cutTimetable(zipPath, trips);
+  const kept = timetableTrips(trips, cuts);
+  const timetable = await cutTimetable(zipPath, kept);
   await writeFile(join(out, 'gtfs.zip'), timetable);
   bytes += timetable.length;
   const manifest = {
     bucket: BUCKET, stopId, day, from: Number(from), to: Number(to), cut: CUT_RULE, objects,
     timetable: {
       source: GTFS_URL, sha256: hash('sha256', await readFile(zipPath)),
-      trips: `Every trip in tripsAtStop(${stopId}) for ${day}, the previous day's late trips included, with the shapes, routes, stops and services they use.`,
+      trips: `Every trip in tripsAtStop(${stopId}) for ${day}, the previous day's late trips included, and every trip a kept trip update names, with the shapes, routes, stops and services they use.`,
       fixture: 'gtfs.zip', fixtureSha256: hash('sha256', timetable),
     },
   };
   await writeFile(join(out, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
-  console.log(`${objects.length} snapshots and the timetable (${trips.size} trips): ${bytes} bytes in ${out}`);
+  console.log(`${objects.length} snapshots and the timetable (${kept.size} trips): ${bytes} bytes in ${out}`);
 }
