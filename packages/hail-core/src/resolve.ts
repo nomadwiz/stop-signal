@@ -5,10 +5,11 @@ import type { Fix } from './predict.ts';
 
 // A live vehicle record as C7 hands it in. It has no route field: AT says the vehicle identifier
 // "should not be used to deduce routes", so route identity is reached only through the trip.
-// As a Fix it carries the position and the instant the vehicle measured it, which predict reads (#113).
+// As a Fix it carries the position and the instant the vehicle measured it, under Fix's names, which predict reads (ADR-029).
 export interface VehicleReport extends Fix {
   vehicleId: string;
-  // Absent when neither the record nor a trip update names the trip (ADR-019).
+  // C7 always sets it: it drops a record whose trip neither the record nor one started trip update names
+  // (ADR-019, ADR-024). callingAt still turns away a report without one.
   tripId?: string;
   // The trip descriptor's start_date, YYYYMMDD: which day's run of the trip this is (ADR-025).
   startDate?: string;
