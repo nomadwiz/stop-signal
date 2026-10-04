@@ -1,14 +1,17 @@
 // C3: estimates how far a vehicle is from the stop at an instant between feed updates (FR6, product.md §4 step 4).
 // It carries the vehicle on along the trip's shape at the speed its last two reports give. Pure: the caller
-// passes the instant, read from the injected Clock (ADR-002 rule 1).
+// passes the instant, read from the injected Clock (ADR-002 rule 1). What it returns is ADR-022's.
 export interface Point { lat: number; lon: number }
 // at is when the vehicle measured its position, in epoch milliseconds.
 export interface Fix extends Point { at: number }
 
 const M_PER_DEGREE = 6_371_000 * (Math.PI / 180);
+// AT's feed "is updated at least every 30 seconds" (m1-revised.md §1.4); a report older than that is stale input (ADR-022).
+const FEED_INTERVAL_MS = 30_000;
 
-// Both numbers are measured along the shape. distanceM is negative once the vehicle is predicted past the stop.
-export function predict(shape: Point[], stop: Point, previous: Fix, latest: Fix, now: number): { distanceM: number; speedMps: number } {
+// distanceM and speedMps are measured along the shape; distanceM is negative once the vehicle is predicted past the stop.
+// stale is true when the latest report is more than one feed interval old at now.
+export function predict(shape: Point[], stop: Point, previous: Fix, latest: Fix, now: number): { distanceM: number; speedMps: number; stale: boolean } {
   if (shape.length < 2) throw new RangeError(`a shape of ${shape.length} points has no line to measure along`);
   if (!(latest.at > previous.at)) throw new RangeError(`latest report at ${latest.at} is not after the previous one at ${previous.at}`);
   // ponytail: flat-earth metres about the shape's first point, as actual-calls.ts does; good to well under a metre across a city.
@@ -38,6 +41,7 @@ export function predict(shape: Point[], stop: Point, previous: Fix, latest: Fix,
   };
 
   const last = along(latest);
-  const speedMps = (last - along(previous)) / ((latest.at - previous.at) / 1000);
-  return { distanceM: along(stop) - last - speedMps * ((now - latest.at) / 1000), speedMps };
+  // Clamped at 0: a bus does not reverse along its trip, and a dwelling bus's fixes jitter backwards (ADR-022).
+  const speedMps = Math.max(0, (last - along(previous)) / ((latest.at - previous.at) / 1000));
+  return { distanceM: along(stop) - last - speedMps * ((now - latest.at) / 1000), speedMps, stale: now - latest.at > FEED_INTERVAL_MS };
 }
