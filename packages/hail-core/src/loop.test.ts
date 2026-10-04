@@ -99,4 +99,10 @@ describe('scheduler', () => {
 
     expect(fired).toEqual(['later', 'tick']);
   });
+
+  it('refuses a wakeup whose time is not a number, which no Clock reading could ever reach', () => {
+    const wakeups = scheduler({ now: () => 0 }, eventLoop<string>(() => {}));
+
+    expect(() => wakeups.at(Number.NaN, 'lost')).toThrow(RangeError);
+  });
 });
