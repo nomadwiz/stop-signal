@@ -25,20 +25,28 @@ export function eventLoop<E>(apply: (event: E, seq: number) => void): (...events
 
 // The deadline scheduler never sleeps (ADR-002): it holds wakeups, and wake() enqueues every one
 // the Clock has reached, earliest first, equal times in the order they were set (sort is stable).
+// submit() is how an arriving event enters the loop (ADR-028 decision 1): every wakeup due by then goes
+// first, so queue order never contradicts clock order, and a wakeup at t beats an event arriving at t.
 export function scheduler<E>(clock: Clock, enqueue: (...events: E[]) => void) {
   let pending: { at: number; event: E }[] = [];
+  const takeDue = (): E[] => {
+    const now = clock.now();
+    const due = pending.filter((w) => w.at <= now).sort((a, b) => a.at - b.at);
+    pending = pending.filter((w) => w.at > now);
+    return due.map((w) => w.event);
+  };
   return {
     at(at: number, event: E): void {
       // NaN fails both `<= now` and `> now`, so wake() would drop it without a trace.
       if (Number.isNaN(at)) throw new RangeError('a wakeup needs a time the Clock can reach');
       pending.push({ at, event });
     },
+    // One enqueue call each, so a throw while applying one due wakeup cannot drop what follows it.
     wake(): void {
-      const now = clock.now();
-      const due = pending.filter((w) => w.at <= now).sort((a, b) => a.at - b.at);
-      pending = pending.filter((w) => w.at > now);
-      // One call, so a throw while applying one due wakeup cannot drop the ones after it.
-      enqueue(...due.map((w) => w.event));
+      enqueue(...takeDue());
+    },
+    submit(event: E): void {
+      enqueue(...takeDue(), event);
     },
   };
 }
