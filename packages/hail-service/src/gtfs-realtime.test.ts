@@ -171,10 +171,10 @@ describe('tripCoverage, recovered', () => {
   });
 });
 
-// A vehicle record as AT sends it: a position, the instant the vehicle measured it (epoch s), and a trip descriptor
-// carrying a route. Latitude and longitude are 32-bit floats on the wire, so these are values a float holds exactly.
 // A trip descriptor for Saturday's run of T1, as a tagged record carries it.
 const T1 = { tripId: 'T1', startDate: '20261003' };
+// A vehicle record as AT sends it: a position, the instant the vehicle measured it (epoch s), and a trip descriptor
+// carrying a route. Latitude and longitude are 32-bit floats on the wire, so these are values a float holds exactly.
 const located = (id: string, trip?: object, at = NOW - 8, latitude = -36.875, longitude = 174.75) => ({
   id,
   vehicle: { vehicle: { id }, position: { latitude, longitude }, timestamp: at, ...(trip && { trip }) },
