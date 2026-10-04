@@ -37,6 +37,12 @@ describe('arrivals', () => {
     ]);
   });
 
+  it('counts calls with no vehicle id on different trips as different vehicles', () => {
+    const result = arrivals([call('A', '', 0, 'trip-1'), call('A', '', 3, 'trip-2')], 5_800);
+
+    expect(result.map(shape)).toEqual([{ stopId: 'A', at: [0, 3], vehicles: 2 }]);
+  });
+
   it('counts a vehicle calling twice within the window as one vehicle', () => {
     const result = arrivals([call('A', 'V1', 0, 'trip-1'), call('A', 'V1', 4, 'trip-2')], 5_800);
 

@@ -21,7 +21,8 @@ export function arrivals(calls: Call[], windowMs: number): Arrival[] {
     if (last?.stopId === c.stopId && c.at - last.calls[0].at <= windowMs) last.calls.push(c);
     else result.push({ stopId: c.stopId, calls: [c], vehicles: 0 });
   }
-  for (const a of result) a.vehicles = new Set(a.calls.map((c) => c.vehicleId)).size;
+  // A vehicle with no id decodes as '', so its trip stands in for it.
+  for (const a of result) a.vehicles = new Set(a.calls.map((c) => c.vehicleId || `trip ${c.tripId}`)).size;
   return result;
 }
 
@@ -43,9 +44,13 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
     console.error('Usage: node packages/hail-service/src/queued-arrivals.ts <gtfs.zip> <YYYYMMDD> <archive root> <from-ms> <to-ms> <D-seconds,…>');
     process.exit(1);
   }
+  const ds = windows.split(',').map(Number);
+  if (![Number(from), Number(to), ...ds].every((n) => Number.isFinite(n) && n > 0)) {
+    console.error(`from-ms, to-ms and every D must be positive numbers: ${from} ${to} ${windows}`);
+    process.exit(1);
+  }
   const index = await loadServiceDay(zipPath, day);
   const { calls } = await actualCalls(index, root, Number(from), Number(to));
-  const ds = windows.split(',').map(Number);
   const ranks = ds.map((d) => rank(calls, index, d * 1000));
   const at = ds.map((_, i) => new Map(ranks[i].map((r) => [r.stopId, r])));
   const routes = (stopId: string) => [...new Set((index.tripsAtStop.get(stopId) ?? [])
