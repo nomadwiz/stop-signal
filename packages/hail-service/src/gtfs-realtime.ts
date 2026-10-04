@@ -102,8 +102,8 @@ export function tripsFromUpdates(feed: transit_realtime.FeedMessage, index: Pick
 // C7's one way to read vehicles from a snapshot: a VehicleReport for each vehicle record whose trip is known (#113).
 // A tagged record keeps its trip_id and start date, whether or not the index holds the trip: the resolver decides.
 // An untagged one takes them from tripsFromUpdates, and is otherwise left out. at is the vehicle's own timestamp,
-// when it measured its position, not the snapshot's. A record with no position or timestamp is left out, since
-// Figure 4.3 makes both mandatory; Saturday 03-10-2026 had none such in 4,715,345. trip.routeId is dropped (ADR-026).
+// when it measured its position, not the snapshot's. A record with no vehicle id, position or timestamp is left out,
+// since Figure 4.3 makes all three mandatory; Saturday 03-10-2026 had none such in 4,715,345. trip.routeId is dropped (ADR-026).
 export function vehicleReports(feed: transit_realtime.FeedMessage, index: Pick<StaticIndex, 'trips' | 'lateTrips'>): VehicleReport[] {
   const recovered = tripsFromUpdates(feed, index);
   const reports: VehicleReport[] = [];
@@ -112,7 +112,7 @@ export function vehicleReports(feed: transit_realtime.FeedMessage, index: Pick<S
     const vehicleId = vehicle?.vehicle?.id ?? '';
     const at = Number(vehicle?.timestamp) * 1000;
     const trip = vehicle?.trip?.tripId ? { tripId: vehicle.trip.tripId, startDate: vehicle.trip.startDate || undefined } : recovered.get(vehicleId);
-    if (!vehicle?.position || !at || !trip) continue;
+    if (!vehicleId || !vehicle?.position || !at || !trip) continue;
     reports.push({ vehicleId, ...trip, lat: vehicle.position.latitude, lon: vehicle.position.longitude, at });
   }
   return reports;
