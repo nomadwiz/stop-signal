@@ -110,6 +110,8 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
   // One day at a time, keeping only its trip_ids and the last day's index, so the heap never holds two whole indexes (B4).
   let index: StaticIndex | undefined;
   for (const day of names) {
+    // Released before the next day loads, so the previous day's whole index is never held beside it.
+    index = undefined;
     index = await loadServiceDay(zipPath, day);
     days.push(new Set(index.trips.keys()));
     console.log(`service day ${day}: ${index.trips.size} trips in the timetable, ${index.lateTrips.size} late trips from ${index.previousDay}`);
