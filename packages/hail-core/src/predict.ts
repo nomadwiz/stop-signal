@@ -43,5 +43,8 @@ export function predict(shape: Point[], stop: Point, previous: Fix, latest: Fix,
   const last = along(latest);
   // Clamped at 0: a bus does not reverse along its trip, and a dwelling bus's fixes jitter backwards (ADR-022).
   const speedMps = Math.max(0, (last - along(previous)) / ((latest.at - previous.at) / 1000));
-  return { distanceM: along(stop) - last - speedMps * ((now - latest.at) / 1000), speedMps, stale: now - latest.at > FEED_INTERVAL_MS };
+  // Clamped at 0: a vehicle's timestamp can run 1–2 s past the instant, and nothing is predicted backwards
+  // (ADR-022, decided 05-10-2026).
+  const ageS = Math.max(0, now - latest.at) / 1000;
+  return { distanceM: along(stop) - last - speedMps * ageS, speedMps, stale: ageS > FEED_INTERVAL_MS / 1000 };
 }
