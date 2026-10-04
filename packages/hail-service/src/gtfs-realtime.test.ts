@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import bindings from 'gtfs-realtime-bindings';
 import { describe, expect, it } from 'vitest';
-import { tripCoverage } from './gtfs-realtime.ts';
+import type { StaticIndex, Trip } from './gtfs-static.ts';
+import { tripCoverage, tripsFromUpdates } from './gtfs-realtime.ts';
 
 const { FeedMessage } = bindings.transit_realtime;
 // One service day's trip_ids, as the counter takes them.
@@ -12,12 +13,15 @@ const TRIPS = [new Set(['T1'])];
 // 00:00 NZDT on Saturday 03-10-2026, which is 11:00 UTC on 02-10-2026.
 const SATURDAY = 1790938800000;
 const HOUR = 3_600_000;
+const trip = (id: string): Trip => ({ id, routeId: 'R1', headsign: '', directionId: 0, shapeId: '', stopTimes: [] });
+// Saturday's own trips, and Friday's T-late, which runs past midnight.
+const INDEX: Pick<StaticIndex, 'trips' | 'lateTrips'> = { trips: new Map([['T1', trip('T1')], ['T2', trip('T2')]]), lateTrips: new Map([['T-late', trip('T-late')]]) };
 
 // One snapshot, as capture archives it: a gzipped FeedMessage at <root>/<UTC date>/<epoch-ms>.pb.gz.
 async function snapshot(root: string, at: number, entity: object[]): Promise<void> {
   const dir = join(root, new Date(at).toISOString().slice(0, 10));
   await mkdir(dir, { recursive: true });
-  const bytes = FeedMessage.encode(FeedMessage.fromObject({ header: { gtfsRealtimeVersion: '2.0' }, entity })).finish();
+  const bytes = FeedMessage.encode(FeedMessage.fromObject({ header: { gtfsRealtimeVersion: '2.0', timestamp: Math.floor(at / 1000) }, entity })).finish();
   await writeFile(join(dir, `${at}.pb.gz`), gzipSync(bytes));
 }
 
@@ -35,10 +39,10 @@ describe('tripCoverage', () => {
       { id: 'update', tripUpdate: { trip: { tripId: 'T1' }, stopTimeUpdate: [] } },
     ]);
 
-    const result = await tripCoverage(root, SATURDAY, SATURDAY + 24 * HOUR, TRIPS);
+    const result = await tripCoverage(root, SATURDAY, SATURDAY + 24 * HOUR, TRIPS, INDEX);
 
     expect(result.snapshots).toBe(1);
-    expect(result.total).toEqual({ records: 4, withTrip: 2, matched: 1, earlierOnly: 0 });
+    expect(result.total).toEqual({ records: 4, withTrip: 2, matched: 1, earlierOnly: 0, recovered: 0 });
   });
 
   it('takes snapshots by key range across UTC folders, and splits them by hour of New Zealand time', async () => {
@@ -51,15 +55,15 @@ describe('tripCoverage', () => {
     // A write capture had not finished renaming.
     await writeFile(join(root, '2026-10-02', `${SATURDAY + 1}.pb.gz.tmp`), 'partial');
 
-    const result = await tripCoverage(root, SATURDAY, SATURDAY + 24 * HOUR, TRIPS);
+    const result = await tripCoverage(root, SATURDAY, SATURDAY + 24 * HOUR, TRIPS, INDEX);
 
     expect(result.snapshots).toBe(2);
     expect(result.first).toBe(SATURDAY);
     expect(result.last).toBe(SATURDAY + 13 * HOUR + 5);
-    expect(result.total).toEqual({ records: 3, withTrip: 2, matched: 2, earlierOnly: 0 });
+    expect(result.total).toEqual({ records: 3, withTrip: 2, matched: 2, earlierOnly: 0, recovered: 0 });
     expect([...result.byHour]).toEqual([
-      ['00', { records: 1, withTrip: 1, matched: 1, earlierOnly: 0 }],
-      ['13', { records: 2, withTrip: 1, matched: 1, earlierOnly: 0 }],
+      ['00', { records: 1, withTrip: 1, matched: 1, earlierOnly: 0, recovered: 0 }],
+      ['13', { records: 2, withTrip: 1, matched: 1, earlierOnly: 0, recovered: 0 }],
     ]);
   });
 
@@ -77,7 +81,7 @@ describe('tripCoverage', () => {
     const root = await mkdtemp(join(tmpdir(), 'rt-'));
     await snapshot(root, SATURDAY + HOUR / 2, overnight);
 
-    const result = await tripCoverage(root, SATURDAY, SATURDAY + 24 * HOUR, [FRIDAY, SATURDAY_TRIPS]);
+    const result = await tripCoverage(root, SATURDAY, SATURDAY + 24 * HOUR, [FRIDAY, SATURDAY_TRIPS], INDEX);
 
     expect(result.total.matched).toBe(3);
   });
@@ -88,9 +92,80 @@ describe('tripCoverage', () => {
     // A stale Friday trip_id in the afternoon still matches, and this count is what shows it.
     await snapshot(root, SATURDAY + 15 * HOUR, [vehicle('stale', { tripId: 'F1' })]);
 
-    const result = await tripCoverage(root, SATURDAY, SATURDAY + 24 * HOUR, [FRIDAY, SATURDAY_TRIPS]);
+    const result = await tripCoverage(root, SATURDAY, SATURDAY + 24 * HOUR, [FRIDAY, SATURDAY_TRIPS], INDEX);
 
     expect(result.total.earlierOnly).toBe(2);
     expect([...result.byHour].map(([hour, c]) => [hour, c.earlierOnly])).toEqual([['00', 1], ['15', 1]]);
+  });
+});
+
+// A trip update naming a vehicle; observed at `at` (epoch s) unless uncertainty says it is a prediction.
+const update = (vehicleId: string, tripId: string, at: number, uncertainty?: number) => ({
+  id: `${tripId}@${vehicleId}`,
+  tripUpdate: { trip: { tripId, startDate: '20261003' }, vehicle: { id: vehicleId }, stopTimeUpdate: [{ stopSequence: 1, departure: { time: at, uncertainty } }] },
+});
+const NOW = SATURDAY / 1000 + 9 * 3600;
+// Encoded and decoded, as capture's snapshots are read.
+const decoded = (entity: object[]) =>
+  FeedMessage.decode(FeedMessage.encode(FeedMessage.fromObject({ header: { gtfsRealtimeVersion: '2.0', timestamp: NOW }, entity })).finish());
+
+describe('tripsFromUpdates', () => {
+  it('takes the trip and start date of the one started trip update that names an untagged vehicle', () => {
+    const feed = decoded([vehicle('v1'), update('v1', 'T1', NOW - 60)]);
+
+    expect(tripsFromUpdates(feed, INDEX)).toEqual(new Map([['v1', { tripId: 'T1', startDate: '20261003' }]]));
+  });
+
+  it('counts a departure at the snapshot time itself as started', () => {
+    const feed = decoded([vehicle('v1'), update('v1', 'T1', NOW)]);
+
+    expect(tripsFromUpdates(feed, INDEX).get('v1')?.tripId).toBe('T1');
+  });
+
+  it('takes a trip from the previous day that runs past midnight, in lateTrips', () => {
+    const feed = decoded([vehicle('v1'), update('v1', 'T-late', NOW - 60)]);
+
+    expect(tripsFromUpdates(feed, INDEX).get('v1')?.tripId).toBe('T-late');
+  });
+
+  it('leaves out a vehicle named by two started trip updates, its previous trip beside its current one (ADR-024)', () => {
+    const feed = decoded([vehicle('v1'), update('v1', 'T1', NOW - 3600), update('v1', 'T2', NOW - 60)]);
+
+    expect(tripsFromUpdates(feed, INDEX).size).toBe(0);
+  });
+
+  it('leaves untagged a vehicle whose trip update has not started, is only predicted, or is not in the index, and one no trip update names', () => {
+    const feed = decoded([
+      vehicle('future'), update('future', 'T1', NOW + 60),
+      vehicle('predicted'), update('predicted', 'T1', NOW - 60, 30),
+      vehicle('unknown trip'), update('unknown trip', 'T9', NOW - 60),
+      vehicle('unnamed'),
+    ]);
+
+    expect(tripsFromUpdates(feed, INDEX).size).toBe(0);
+  });
+
+  it('ignores a trip update not in the index when deciding whether a vehicle is named twice', () => {
+    const feed = decoded([vehicle('v1'), update('v1', 'T9', NOW - 3600), update('v1', 'T1', NOW - 60)]);
+
+    expect(tripsFromUpdates(feed, INDEX).get('v1')?.tripId).toBe('T1');
+  });
+
+  it('gives nothing for a vehicle whose record carries its own trip_id', () => {
+    const feed = decoded([vehicle('v1', { tripId: 'T2' }), update('v1', 'T1', NOW - 60)]);
+
+    expect(tripsFromUpdates(feed, INDEX).size).toBe(0);
+  });
+});
+
+describe('tripCoverage, recovered', () => {
+  it('counts the untagged records whose trip a trip update gives, overall and by hour', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'rt-'));
+    await snapshot(root, SATURDAY + 9 * HOUR, [vehicle('v1'), update('v1', 'T1', NOW - 60), vehicle('v2'), vehicle('v3', { tripId: 'T2' })]);
+
+    const result = await tripCoverage(root, SATURDAY, SATURDAY + 24 * HOUR, TRIPS, INDEX);
+
+    expect(result.total.recovered).toBe(1);
+    expect(result.byHour.get('09')?.recovered).toBe(1);
   });
 });

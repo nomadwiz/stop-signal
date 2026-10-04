@@ -1,5 +1,6 @@
 // C7: decodes archived GTFS-Realtime snapshots and measures R1, how many vehicle records carry a
-// trip_id in the timetable of the service days named (#20). `gtfs-realtime-bindings` is imported here and
+// trip_id in the timetable of the service days named (#20), and how many without one take their trip
+// from a trip update (#23). `gtfs-realtime-bindings` is imported here and
 // nowhere else outside tests (ADR-015 decision 3); hail-core never imports this module.
 //
 // Usage: node packages/hail-service/src/gtfs-realtime.ts <gtfs.zip> <YYYYMMDD[,YYYYMMDD…]> <archive root> <from-ms> <to-ms>
@@ -7,24 +8,26 @@
 //   matches each vehicle record's trip_id against the trips gtfs-static.ts keeps for any day named.
 //   Name the day measured last, after the day before it, whose trips run past midnight: 20261002,20261003.
 //   Prints A (matched / all records), B (matched / records with a trip_id), how many matched only
-//   through a day before the last, and all three by NZ hour.
+//   through a day before the last, how many without a trip_id tripsFromUpdates recovers against the
+//   last day's index, and all four by NZ hour.
 import { realpathSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gunzipSync } from 'node:zlib';
-import bindings from 'gtfs-realtime-bindings';
-import { loadServiceDay } from './gtfs-static.ts';
+import bindings, { type transit_realtime } from 'gtfs-realtime-bindings';
+import { loadServiceDay, type StaticIndex } from './gtfs-static.ts';
 
 // earlierOnly: matched, but not through the last day named, such as a Friday trip seen on Saturday.
-export interface Coverage { records: number; withTrip: number; matched: number; earlierOnly: number }
+// recovered: no trip_id, but tripsFromUpdates gives one.
+export interface Coverage { records: number; withTrip: number; matched: number; earlierOnly: number; recovered: number }
 export interface Measured { snapshots: number; first: number; last: number; total: Coverage; byHour: Map<string, Coverage> }
 
 // The snapshot's capture time decides its hour, not the vehicle's own timestamp.
 // ponytail: keyed by hour alone, so a range over a day merges the same hour of two days; key by date too if one is ever wanted.
 const nzHour = new Intl.DateTimeFormat('en-NZ', { timeZone: 'Pacific/Auckland', hour: '2-digit', hourCycle: 'h23' });
 
-export async function tripCoverage(root: string, from: number, to: number, days: Set<string>[]): Promise<Measured> {
+export async function tripCoverage(root: string, from: number, to: number, days: Set<string>[], index: Pick<StaticIndex, 'trips' | 'lateTrips'>): Promise<Measured> {
   const last = days.at(-1);
   // Keyed by time, never by folder: folders are UTC dates and a New Zealand day spans two.
   const files = (await readdir(root, { recursive: true }))
@@ -33,31 +36,64 @@ export async function tripCoverage(root: string, from: number, to: number, days:
     .filter(({ at }) => from <= at && at < to)
     .sort((a, b) => a.at - b.at);
 
-  const total: Coverage = { records: 0, withTrip: 0, matched: 0, earlierOnly: 0 };
+  const total: Coverage = { records: 0, withTrip: 0, matched: 0, earlierOnly: 0, recovered: 0 };
   const byHour = new Map<string, Coverage>();
   for (const { path, at } of files) {
     const hour = nzHour.format(at);
     let bucket = byHour.get(hour);
     if (!bucket) {
-      bucket = { records: 0, withTrip: 0, matched: 0, earlierOnly: 0 };
+      bucket = { records: 0, withTrip: 0, matched: 0, earlierOnly: 0, recovered: 0 };
       byHour.set(hour, bucket);
     }
     const feed = bindings.transit_realtime.FeedMessage.decode(gunzipSync(await readFile(join(root, path))));
+    const recovered = tripsFromUpdates(feed, index);
     for (const entity of feed.entity) {
       if (!entity.vehicle) continue;
       // A missing trip_id decodes as '', so an empty one counts as absent.
       const tripId = entity.vehicle.trip?.tripId;
       const matched = !!tripId && days.some((day) => day.has(tripId));
       const earlierOnly = matched && !last?.has(tripId);
+      const fromUpdate = !tripId && recovered.has(entity.vehicle.vehicle?.id ?? '');
       for (const c of [total, bucket]) {
         c.records++;
         c.withTrip += Number(!!tripId);
         c.matched += Number(matched);
         c.earlierOnly += Number(earlierOnly);
+        c.recovered += Number(fromUpdate);
       }
     }
   }
   return { snapshots: files.length, first: files[0]?.at ?? NaN, last: files.at(-1)?.at ?? NaN, total, byHour };
+}
+
+// A trip as a trip update gives it; startDate is absent when the trip update carries none.
+export interface TripFromUpdate { tripId: string; startDate?: string }
+
+// For each vehicle record in feed without a trip_id, the trip of the one trip update in the same snapshot whose
+// vehicle.id is that vehicle, whose trip is in the day's trips or the previous day's late trips, and which has
+// started: an arrival or departure at or before the snapshot, with uncertainty 0 or absent (ADR-019, ADR-020).
+// A vehicle that two or more such trip updates name, its previous trip beside its current one, is left out, as is
+// one that none names: neither is a candidate (ADR-024). Which run a trip_id in both maps is, is the resolver's.
+export function tripsFromUpdates(feed: transit_realtime.FeedMessage, index: Pick<StaticIndex, 'trips' | 'lateTrips'>): Map<string, TripFromUpdate> {
+  const made = Number(feed.header.timestamp);
+  const named = new Map<string, TripFromUpdate[]>();
+  for (const { tripUpdate } of feed.entity) {
+    const vehicleId = tripUpdate?.vehicle?.id;
+    const tripId = tripUpdate?.trip.tripId;
+    if (!vehicleId || !tripId || !(index.trips.has(tripId) || index.lateTrips.has(tripId))) continue;
+    // Unset fields decode as 0 and '', so an absent uncertainty is 0 and an absent start date is ''.
+    const started = (tripUpdate.stopTimeUpdate ?? []).some((u) => [u.arrival, u.departure].some((ev) => ev && !ev.uncertainty && Number(ev.time) && Number(ev.time) <= made));
+    if (!started) continue;
+    const list = named.get(vehicleId) ?? named.set(vehicleId, []).get(vehicleId)!;
+    list.push({ tripId, startDate: tripUpdate.trip.startDate || undefined });
+  }
+  const trips = new Map<string, TripFromUpdate>();
+  for (const { vehicle } of feed.entity) {
+    const vehicleId = vehicle?.vehicle?.id;
+    const only = vehicleId ? named.get(vehicleId) : undefined;
+    if (vehicleId && !vehicle.trip?.tripId && only?.length === 1) trips.set(vehicleId, only[0]);
+  }
+  return trips;
 }
 
 const percent = (part: number, whole: number) => (whole ? `${((100 * part) / whole).toFixed(1)}%` : '—');
@@ -70,24 +106,26 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
   }
   const names = dayList.split(',');
   const days: Set<string>[] = [];
-  // One day at a time, keeping only its trip_ids, so the heap never holds two whole indexes (B4).
+  // One day at a time, keeping only its trip_ids and the last day's index, so the heap never holds two whole indexes (B4).
+  let index: StaticIndex | undefined;
   for (const day of names) {
-    const { trips } = await loadServiceDay(zipPath, day);
-    days.push(new Set(trips.keys()));
-    console.log(`service day ${day}: ${trips.size} trips in the timetable`);
+    index = await loadServiceDay(zipPath, day);
+    days.push(new Set(index.trips.keys()));
+    console.log(`service day ${day}: ${index.trips.size} trips in the timetable, ${index.lateTrips.size} late trips from ${index.previousDay}`);
   }
-  const m = await tripCoverage(root, Number(from), Number(to), days);
+  const m = await tripCoverage(root, Number(from), Number(to), days, index!);
   if (!m.snapshots) {
     console.error(`no snapshots in [${from}, ${to}) under ${root}`);
     process.exit(1);
   }
-  const { records, withTrip, matched, earlierOnly } = m.total;
+  const { records, withTrip, matched, earlierOnly, recovered } = m.total;
   console.log(`${m.snapshots} snapshots, ${new Date(m.first).toISOString()} to ${new Date(m.last).toISOString()}`);
   console.log(`A = ${matched} / ${records} vehicle records = ${percent(matched, records)}`);
   console.log(`B = ${matched} / ${withTrip} records with a trip_id = ${percent(matched, withTrip)}`);
   console.log(`matched only through a day before ${names.at(-1)}: ${earlierOnly}`);
-  console.log('\n| NZ hour | Records | With trip_id | Matched | Only an earlier day | A | B |\n| --- | --- | --- | --- | --- | --- | --- |');
+  console.log(`no trip_id, recovered from a trip update against ${names.at(-1)}'s index: ${recovered} of ${records - withTrip}`);
+  console.log('\n| NZ hour | Records | With trip_id | Matched | Only an earlier day | Recovered | A | B |\n| --- | --- | --- | --- | --- | --- | --- | --- |');
   for (const [hour, c] of m.byHour) {
-    console.log(`| ${hour} | ${c.records} | ${c.withTrip} | ${c.matched} | ${c.earlierOnly} | ${percent(c.matched, c.records)} | ${percent(c.matched, c.withTrip)} |`);
+    console.log(`| ${hour} | ${c.records} | ${c.withTrip} | ${c.matched} | ${c.earlierOnly} | ${c.recovered} | ${percent(c.matched, c.records)} | ${percent(c.matched, c.withTrip)} |`);
   }
 }
