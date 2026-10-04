@@ -1,7 +1,7 @@
 // C7: decodes archived GTFS-Realtime snapshots and measures R1, how many vehicle records carry a
 // trip_id in the timetable of the service days named (#20), and how many without one take their trip
-// from a trip update (#23). `gtfs-realtime-bindings` is imported here and
-// nowhere else outside tests (ADR-015 decision 3); hail-core never imports this module.
+// from a trip update (#23). `gtfs-realtime-bindings` is imported here and nowhere else outside tests
+// (ADR-015 decision 3); hail-core never imports this module.
 //
 // Usage: node packages/hail-service/src/gtfs-realtime.ts <gtfs.zip> <YYYYMMDD[,YYYYMMDD…]> <archive root> <from-ms> <to-ms>
 //   Reads every <root>/*/<epoch-ms>.pb.gz that capture wrote with from-ms <= epoch-ms < to-ms, and
@@ -73,7 +73,8 @@ export interface TripFromUpdate { tripId: string; startDate?: string }
 // vehicle.id is that vehicle, whose trip is in the day's trips or the previous day's late trips, and which has
 // started: an arrival or departure at or before the snapshot, with uncertainty 0 or absent (ADR-019, ADR-020).
 // A vehicle that two or more such trip updates name, its previous trip beside its current one, is left out, as is
-// one that none names: neither is a candidate (ADR-024). Which run a trip_id in both maps is, is the resolver's.
+// one that none names: neither is a candidate (ADR-024). The resolver
+// chooses which run of a trip_id in both maps the vehicle is on, by startDate (ADR-025).
 export function tripsFromUpdates(feed: transit_realtime.FeedMessage, index: Pick<StaticIndex, 'trips' | 'lateTrips'>): Map<string, TripFromUpdate> {
   const made = Number(feed.header.timestamp);
   const named = new Map<string, TripFromUpdate[]>();
