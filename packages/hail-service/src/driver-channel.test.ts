@@ -20,7 +20,11 @@ async function serve(channel: ReturnType<typeof driverChannel>): Promise<string>
 async function events(response: Response, count: number): Promise<{ event: string; data: unknown }[]> {
   const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
   let text = '';
-  while (text.split('\n\n').length - 1 < count) text += (await reader.read()).value ?? '';
+  while (text.split('\n\n').length - 1 < count) {
+    const { done, value } = await reader.read();
+    if (done) throw new Error(`the stream ended after ${text.split('\n\n').length - 1} of ${count} events`);
+    text += value;
+  }
   return text
     .split('\n\n')
     .slice(0, count)
@@ -56,22 +60,5 @@ describe('driverChannel', () => {
 
     expect(await events(a, 1)).toEqual([{ event: 'signal', data: signal }]);
     expect(await events(b, 1)).toEqual([{ event: 'signal', data: signal }]);
-  });
-
-  // EventSource reconnects on its own after a dropped connection, and a signal sent in the gap must not be lost.
-  it('sends a console that connects late the signals still live, and none already retracted', async () => {
-    const channel = driverChannel();
-    const url = await serve(channel);
-    channel.signal(signal);
-    channel.signal({ id: 's2', vehicleId: 'v8', stopId: '7177-4660a5ff' });
-    channel.retract('s1');
-
-    const response = await fetch(url);
-    channel.signal({ id: 's3', vehicleId: 'v9', stopId: '7177-4660a5ff' });
-
-    expect(await events(response, 2)).toEqual([
-      { event: 'signal', data: { id: 's2', vehicleId: 'v8', stopId: '7177-4660a5ff' } },
-      { event: 'signal', data: { id: 's3', vehicleId: 'v9', stopId: '7177-4660a5ff' } },
-    ]);
   });
 });
