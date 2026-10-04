@@ -105,6 +105,48 @@ describe('loadServiceDay', () => {
     expect(index.shapes.get('S-busway')?.map((p) => p.sequence)).toEqual([1, 2, 10]);
   });
 
+  it('names the service day before, across the start of a month', async () => {
+    const index = await loadServiceDay(FIXTURE, '20261001');
+
+    expect(index.previousDay).toBe('20260930');
+  });
+
+  it("keeps the previous day's trips that end after 24:00:00, with their times as written", async () => {
+    // Tuesday's T-event ends at 25:42; Event does not run on Wednesday.
+    const index = await loadServiceDay(FIXTURE, '20261007');
+
+    expect([...index.lateTrips.keys()]).toEqual(['T-event']);
+    expect(index.trips.has('T-event')).toBe(false);
+    expect(index.lateTrips.get('T-event')?.stopTimes[0]?.arrival).toBe(25 * 3600 + 30 * 60);
+  });
+
+  it("leaves out the previous day's trips that end at or before 24:00:00", async () => {
+    // Sunday runs T-weekend, ending 08:20, and T-midnight, ending at 24:00:00 exactly.
+    const index = await loadServiceDay(FIXTURE, DAY);
+
+    expect(index.previousDay).toBe('20261004');
+    expect(index.lateTrips.size).toBe(0);
+  });
+
+  it('holds a trip_id that runs on both days in both maps, as one object', async () => {
+    // Event runs on Monday and Tuesday.
+    const index = await loadServiceDay(FIXTURE, '20261006');
+
+    expect(index.trips.has('T-event')).toBe(true);
+    expect(index.lateTrips.get('T-event')).toBe(index.trips.get('T-event'));
+  });
+
+  it('maps each stop to the late trips too, each trip once', async () => {
+    expect((await loadServiceDay(FIXTURE, '20261007')).tripsAtStop.get('A')).toEqual(['T-weekday', 'T-school', 'T-event']);
+    expect((await loadServiceDay(FIXTURE, '20261006')).tripsAtStop.get('B')).toEqual(['T-weekday', 'T-school', 'T-event']);
+  });
+
+  it('keeps the shapes of late trips', async () => {
+    const index = await loadServiceDay(FIXTURE, '20261007');
+
+    expect([...index.shapes.keys()].sort()).toEqual(['S-busway', 'S-event']);
+  });
+
   it('rejects a day not written as YYYYMMDD', async () => {
     await expect(loadServiceDay(FIXTURE, '2026-10-05')).rejects.toThrow('YYYYMMDD');
   });
