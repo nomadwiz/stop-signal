@@ -281,10 +281,12 @@ describe('the loaded index as the resolver reads it', () => {
   it("lets callingAt find the day's trips and the previous day's late trips at a stop", async () => {
     // Tuesday's T-event runs past midnight into Wednesday; T-school is Wednesday's own and calls at A, not at C.
     const index = await loadServiceDay(FIXTURE, '20261007');
-    const late = { report: { vehicleId: 'v1', tripId: 'T-event' }, predictedArrival: 2_000 };
-    const own = { report: { vehicleId: 'v2', tripId: 'T-school' }, predictedArrival: 1_000 };
+    const late = { report: { vehicleId: 'v1', tripId: 'T-event', startDate: '20261006' }, predictedArrival: 2_000 };
+    const own = { report: { vehicleId: 'v2', tripId: 'T-school', startDate: '20261007' }, predictedArrival: 1_000 };
+    // Event does not run on Wednesday, so no run of T-event starts that day (ADR-025).
+    const noSuchRun = { report: { vehicleId: 'v3', tripId: 'T-event', startDate: '20261007' }, predictedArrival: 500 };
 
-    expect(callingAt(index, 'A', [late, own])).toEqual([own, late]);
+    expect(callingAt(index, 'A', [late, own, noSuchRun])).toEqual([own, late]);
     expect(callingAt(index, 'C', [late, own])).toEqual([]);
   });
 });
