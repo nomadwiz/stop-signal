@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import bindings from 'gtfs-realtime-bindings';
 import { describe, expect, it } from 'vitest';
-import { cutFeed, cutTimetable } from './cut-fixtures.ts';
+import { cutFeed, cutTimetable, timetableTrips } from './cut-fixtures.ts';
 import { loadServiceDay } from './gtfs-static.ts';
 
 const { FeedMessage } = bindings.transit_realtime;
@@ -46,6 +46,15 @@ describe('cutFeed', () => {
     });
 
     expect(cutFeed(feed, new Set(['T1'])).entity.map((e) => e.id)).toEqual(['u T1 ']);
+  });
+});
+
+describe('timetableTrips', () => {
+  it("adds every trip a kept trip update names to the corridor's, so the join counts the updates the cut kept", () => {
+    const cut = (entity: object[]) => FeedMessage.fromObject({ header: { gtfsRealtimeVersion: '2.0' }, entity });
+    const cuts = [cut([update('T1', 'a'), vehicle('a'), update('T9', 'a')]), cut([update('T8', 'b'), vehicle('c', 'T2')])];
+
+    expect([...timetableTrips(new Set(['T1', 'T2']), cuts)].sort()).toEqual(['T1', 'T2', 'T8', 'T9']);
   });
 });
 
