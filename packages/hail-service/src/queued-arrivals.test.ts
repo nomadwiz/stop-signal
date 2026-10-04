@@ -51,9 +51,10 @@ describe('arrivals', () => {
 });
 
 describe('rank', () => {
-  // Only the fields rank reads: which route each trip runs and that route's type.
+  // Only the fields rank reads: which route each trip runs, that route's type, and each trip's stop sequences 1 to 3.
+  const stopTimes = [{ sequence: 1 }, { sequence: 2 }, { sequence: 3 }];
   const index = {
-    trips: new Map([['bus-1', { routeId: 'R-bus' }], ['bus-2', { routeId: 'R-bus' }], ['train-1', { routeId: 'R-train' }]]),
+    trips: new Map([['bus-1', { routeId: 'R-bus', stopTimes }], ['bus-2', { routeId: 'R-bus', stopTimes }], ['train-1', { routeId: 'R-train', stopTimes }]]),
     routes: new Map([['R-bus', { type: 3 }], ['R-train', { type: 2 }]]),
   } as unknown as StaticIndex;
 
@@ -67,6 +68,15 @@ describe('rank', () => {
       { stopId: 'A', queued: 1, single: 1 },
       { stopId: 'B', queued: 0, single: 1 },
     ]);
+  });
+
+  it('leaves out a call at its trip\'s first or last stop (ADR-027)', () => {
+    const calls = [
+      { ...call('A', 'V1', 0, 'bus-1'), stopSequence: 1 }, { ...call('A', 'V2', 2, 'bus-2'), stopSequence: 1 },
+      { ...call('B', 'V1', 0, 'bus-1'), stopSequence: 3 }, call('B', 'V2', 2, 'bus-2'),
+    ];
+
+    expect(rank(calls, index, 5_800)).toEqual([{ stopId: 'B', queued: 0, single: 1 }]);
   });
 
   it('breaks a tie in queued arrivals by stop_id', () => {
