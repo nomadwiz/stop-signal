@@ -13,11 +13,12 @@ afterEach(() => {
 });
 
 // The real loop behind the server, so a test sees what the loop applies, not what the adapter meant to send.
-async function serve(): Promise<{ base: string; applied: HailEvent[]; channel: ReturnType<typeof driverChannel> }> {
+// A test may pass its own submit instead.
+async function serve(submit?: (event: HailEvent) => void): Promise<{ base: string; applied: HailEvent[]; channel: ReturnType<typeof driverChannel> }> {
   const applied: HailEvent[] = [];
   const wakeups = scheduler<HailEvent>({ now: () => 0 }, eventLoop((event) => applied.push(event)));
   const channel = driverChannel();
-  server = hailServer({ channel, submit: wakeups.submit });
+  server = hailServer({ channel, submit: submit ?? wakeups.submit });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   return { base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, applied, channel };
 }
@@ -89,10 +90,9 @@ describe('hailServer, the driver console routes', () => {
 
   it('answers 500 and keeps serving when applying an event throws', async () => {
     let fail = true;
-    const channel = driverChannel();
-    server = hailServer({ channel, submit: () => { if (fail) throw new Error('apply failed'); } });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const { base } = await serve(() => {
+      if (fail) throw new Error('apply failed');
+    });
 
     expect((await post(`${base}/ack`, JSON.stringify({ signalId: 's1' }))).status).toBe(500);
     fail = false;
