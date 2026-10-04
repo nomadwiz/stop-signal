@@ -20,8 +20,8 @@ import bindings, { type transit_realtime } from 'gtfs-realtime-bindings';
 import { GTFS_URL, loadServiceDay, zipRows } from './gtfs-static.ts';
 
 const { FeedMessage } = bindings.transit_realtime;
-export const BUCKET = 'stopsignal-archive-995583236543';
-export const CUT_RULE = "Every trip update whose trip calls at the stop; every vehicle whose trip calls at the stop or that one of those trip updates names; and every other trip update that names a kept vehicle (ADR-030).";
+const BUCKET = 'stopsignal-archive-995583236543';
+const CUT_RULE = "Every trip update whose trip calls at the stop; every vehicle whose trip calls at the stop or that one of those trip updates names; and every other trip update that names a kept vehicle (ADR-030).";
 
 // The feed cut to trips, keeping what the resolver, the trip-update join (ADR-019, ADR-024) and the oracle read for the
 // stop, in the feed's own order. Trip updates naming a kept vehicle stay whatever their trip, so ADR-024 sees every name.
@@ -133,12 +133,14 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
 
   // Keyed by time, never by folder: folders are UTC dates and a New Zealand day spans two.
   const paths = (await readdir(root, { recursive: true }))
-    .filter((path) => path.endsWith('.pb.gz') && Number(from) <= Number(basename(path, '.pb.gz')) && Number(basename(path, '.pb.gz')) < Number(to))
-    .sort((a, b) => Number(basename(a, '.pb.gz')) - Number(basename(b, '.pb.gz')));
+    .filter((path) => path.endsWith('.pb.gz'))
+    .map((path) => ({ path, at: Number(basename(path, '.pb.gz')) }))
+    .filter(({ at }) => Number(from) <= at && at < Number(to))
+    .sort((a, b) => a.at - b.at);
   const objects = [];
   const cuts = [];
   let bytes = 0;
-  for (const path of paths) {
+  for (const { path } of paths) {
     const source = await readFile(join(root, path));
     const feed = cutFeed(FeedMessage.decode(gunzipSync(source)), trips);
     cuts.push(feed);
@@ -146,7 +148,7 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
     const fixture = `snapshots/${basename(path)}`;
     await writeFile(join(out, fixture), cut);
     bytes += cut.length;
-    objects.push({ key: `raw/${path.split('\\').join('/')}`, size: source.length, sha256: hash('sha256', source), md5: hash('md5', source), fixture, fixtureSha256: hash('sha256', cut) });
+    objects.push({ key: `raw/${path}`, size: source.length, sha256: hash('sha256', source), md5: hash('md5', source), fixture, fixtureSha256: hash('sha256', cut) });
   }
   const kept = timetableTrips(trips, cuts);
   const timetable = await cutTimetable(zipPath, kept);
