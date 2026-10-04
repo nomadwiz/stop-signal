@@ -100,6 +100,22 @@ describe('scheduler', () => {
     expect(fired).toEqual(['later', 'tick']);
   });
 
+  // ADR-028 decision 1: due wakeups enter the queue before the event that arrives, the wakeup first on a tie.
+  it('submits an arriving event after every wakeup due by then: a wakeup at 100 and a tick at 100 apply as [wakeup, tick]', () => {
+    let now = 0;
+    const fired: string[] = [];
+    const wakeups = scheduler({ now: () => now }, eventLoop<string>((event) => fired.push(event)));
+    wakeups.at(100, 'wakeup');
+    wakeups.at(101, 'not yet');
+
+    // Detached, as an adapter is handed it.
+    const { submit } = wakeups;
+    now = 100;
+    submit('tick');
+
+    expect(fired).toEqual(['wakeup', 'tick']);
+  });
+
   it('refuses a wakeup whose time is not a number, which no Clock reading could ever reach', () => {
     const wakeups = scheduler({ now: () => 0 }, eventLoop<string>(() => {}));
 
