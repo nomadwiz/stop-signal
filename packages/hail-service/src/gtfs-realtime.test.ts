@@ -5,7 +5,8 @@ import { gzipSync } from 'node:zlib';
 import bindings from 'gtfs-realtime-bindings';
 import { describe, expect, it } from 'vitest';
 import type { StaticIndex, Trip } from './gtfs-static.ts';
-import { tripCoverage, tripsFromUpdates } from './gtfs-realtime.ts';
+import { predict } from '../../hail-core/src/predict.ts';
+import { tripCoverage, tripsFromUpdates, vehicleReports } from './gtfs-realtime.ts';
 
 const { FeedMessage } = bindings.transit_realtime;
 // One service day's trip_ids, as the counter takes them.
@@ -167,5 +168,64 @@ describe('tripCoverage, recovered', () => {
 
     expect(result.total.recovered).toBe(1);
     expect(result.byHour.get('09')?.recovered).toBe(1);
+  });
+});
+
+// A vehicle record as AT sends it: a position, the instant the vehicle measured it (epoch s), and a trip descriptor
+// carrying a route. Latitude and longitude are 32-bit floats on the wire, so these are values a float holds exactly.
+const located = (id: string, trip?: object, at = NOW - 8, latitude = -36.875, longitude = 174.75) => ({
+  id,
+  vehicle: { vehicle: { id }, position: { latitude, longitude }, timestamp: at, ...(trip && { trip }) },
+});
+
+describe('vehicleReports', () => {
+  it("keeps a tagged record's trip_id and start date, with its position and fix time in epoch ms, and drops its route (ADR-026)", () => {
+    const feed = decoded([located('v1', { tripId: 'T2', startDate: '20261003', routeId: 'DEV-209' })]);
+
+    const reports = vehicleReports(feed, INDEX);
+
+    expect(reports).toEqual([{ vehicleId: 'v1', tripId: 'T2', startDate: '20261003', lat: -36.875, lon: 174.75, at: (NOW - 8) * 1000 }]);
+    expect(reports[0]).not.toHaveProperty('routeId');
+  });
+
+  it('keeps a tagged trip_id the index does not hold, for the resolver to turn away', () => {
+    const feed = decoded([located('v1', { tripId: 'T9', startDate: '20261003' })]);
+
+    expect(vehicleReports(feed, INDEX).map((r) => r.tripId)).toEqual(['T9']);
+  });
+
+  it('gives an untagged record the trip and start date of the one started trip update that names it (ADR-019)', () => {
+    const feed = decoded([located('v1'), update('v1', 'T1', NOW - 60)]);
+
+    expect(vehicleReports(feed, INDEX)).toEqual([{ vehicleId: 'v1', tripId: 'T1', startDate: '20261003', lat: -36.875, lon: 174.75, at: (NOW - 8) * 1000 }]);
+  });
+
+  it('leaves out an untagged record that no started trip update names, or that two name (ADR-024)', () => {
+    const feed = decoded([
+      located('unnamed'),
+      located('twice'), update('twice', 'T1', NOW - 3600), update('twice', 'T2', NOW - 60),
+      located('route only', { routeId: 'DEV-209' }),
+    ]);
+
+    expect(vehicleReports(feed, INDEX)).toEqual([]);
+  });
+
+  it('leaves out a record with no position or no fix time, which Figure 4.3 makes every report carry', () => {
+    const feed = decoded([
+      { id: 'no position', vehicle: { vehicle: { id: 'no position' }, timestamp: NOW, trip: { tripId: 'T1', startDate: '20261003' } } },
+      { id: 'no time', vehicle: { vehicle: { id: 'no time' }, position: { latitude: -36.875, longitude: 174.75 }, trip: { tripId: 'T1', startDate: '20261003' } } },
+    ]);
+
+    expect(vehicleReports(feed, INDEX)).toEqual([]);
+  });
+
+  it("gives reports from two snapshots that predict takes as the vehicle's previous and latest fixes", () => {
+    // 2^-9 degrees, about 217 m, north along a straight shape in 20 s.
+    const earlier = vehicleReports(decoded([located('v1', { tripId: 'T1', startDate: '20261003' }, NOW - 20, -36.875)]), INDEX);
+    const later = vehicleReports(decoded([located('v1', { tripId: 'T1', startDate: '20261003' }, NOW, -36.873046875)]), INDEX);
+
+    const { speedMps } = predict([{ lat: -36.88, lon: 174.75 }, { lat: -36.86, lon: 174.75 }], { lat: -36.865, lon: 174.75 }, earlier[0], later[0], NOW * 1000);
+
+    expect(speedMps).toBeCloseTo(10.86, 2);
   });
 });
