@@ -1,9 +1,12 @@
 // C3: which approaching vehicles will call at a stop (#22, FR5, QR2, doc/design/product.md §4 step 3).
 // The match is on the vehicle's trip, never its route: two vehicles on one road are told apart by tripId.
 
+import type { Fix } from './predict.ts';
+
 // A live vehicle record as C7 hands it in. It has no route field: AT says the vehicle identifier
 // "should not be used to deduce routes", so route identity is reached only through the trip.
-export interface VehicleReport {
+// As a Fix it carries the position and the instant the vehicle measured it, which predict reads (#113).
+export interface VehicleReport extends Fix {
   vehicleId: string;
   // Absent when neither the record nor a trip update names the trip (ADR-019).
   tripId?: string;
