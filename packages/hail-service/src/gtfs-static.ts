@@ -1,10 +1,12 @@
-// C7: loads AT's GTFS static timetable for one service day into an in-memory index (#19, FR5).
+// C7: loads AT's GTFS static timetable for one service day, and the previous day's trips that run past
+// midnight into it, into an in-memory index (#19, #102, FR5, ADR-020).
 // No dependency: zip entries are found through the central directory and inflated with node:zlib
 // (ADR-015 decision 6). Only this module knows the wire format; hail-core never imports it.
 //
 // Usage: node --expose-gc packages/hail-service/src/gtfs-static.ts <gtfs.zip> <YYYYMMDD>
 //   Downloads AT's feed to <gtfs.zip> first if no file is there, loads that day, and prints the
-//   counts kept and the heap the index holds, which is budget B4's measure (≤ 50 MB base).
+//   counts kept, the late trips and how many of them also run that day, and the heap the index holds,
+//   which is budget B4's measure (≤ 50 MB base).
 import { createReadStream, createWriteStream, existsSync, realpathSync } from 'node:fs';
 import { open, rename } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
@@ -22,11 +24,16 @@ export interface StopTime { stopId: string; sequence: number; arrival: number | 
 export interface Trip { id: string; routeId: string; headsign: string; directionId: number; shapeId: string; stopTimes: StopTime[] }
 export interface ShapePoint { lat: number; lon: number; sequence: number }
 
+// trips are day's own, timed from day's start. lateTrips are previousDay's trips whose last stop time is after
+// 24:00:00, timed from previousDay's start, so 24:32:00 stays 88320. Which run a vehicle is on is for the caller.
 export interface StaticIndex {
   day: string;
+  previousDay: string;
   stops: Map<string, Stop>;
   routes: Map<string, Route>;
   trips: Map<string, Trip>;
+  lateTrips: Map<string, Trip>;
+  // Lists each of the day's trips and late trips at most once.
   tripsAtStop: Map<string, string[]>;
   shapes: Map<string, ShapePoint[]>;
 }
@@ -39,19 +46,13 @@ export async function loadServiceDay(zipPath: string, day: string): Promise<Stat
   if (!/^\d{8}$/.test(day) || date.toISOString().slice(0, 10).replaceAll('-', '') !== day) {
     throw new Error(`service day ${day} is not a YYYYMMDD date`);
   }
+  const before = new Date(date.getTime() - 86_400_000);
+  const previousDay = before.toISOString().slice(0, 10).replaceAll('-', '');
   const entries = await readCentralDirectory(zipPath);
   const rows = (name: string, columns: string[]) => readRows(zipPath, entries, name, columns);
 
-  const weekday = WEEKDAYS[date.getUTCDay()];
-  const running = new Set<string>();
-  for await (const r of rows('calendar.txt', ['service_id', 'start_date', 'end_date', ...WEEKDAYS])) {
-    if (r[weekday] === '1' && r.start_date <= day && day <= r.end_date) running.add(r.service_id);
-  }
-  for await (const r of rows('calendar_dates.txt', ['service_id', 'date', 'exception_type'])) {
-    if (r.date !== day) continue;
-    if (r.exception_type === '1') running.add(r.service_id);
-    if (r.exception_type === '2') running.delete(r.service_id);
-  }
+  const running = await servicesOn(rows, day, date);
+  const runningBefore = await servicesOn(rows, previousDay, before);
 
   const stops = new Map<string, Stop>();
   for await (const r of rows('stops.txt', ['stop_id', 'stop_name', 'stop_lat', 'stop_lon'])) {
@@ -61,24 +62,37 @@ export async function loadServiceDay(zipPath: string, day: string): Promise<Stat
   for await (const r of rows('routes.txt', ['route_id', 'route_short_name', 'route_type'])) {
     routes.set(r.route_id, { id: r.route_id, shortName: r.route_short_name, type: +r.route_type });
   }
+  // A trip_id's stop times do not depend on the date, so one that runs on both days is one object in both maps.
   const trips = new Map<string, Trip>();
+  const lateTrips = new Map<string, Trip>();
   for await (const r of rows('trips.txt', ['route_id', 'service_id', 'trip_id'])) {
-    if (!running.has(r.service_id)) continue;
-    trips.set(r.trip_id, {
+    const today = running.has(r.service_id);
+    const yesterday = runningBefore.has(r.service_id);
+    if (!today && !yesterday) continue;
+    const trip = {
       id: r.trip_id, routeId: r.route_id, headsign: r.trip_headsign ?? '', directionId: +(r.direction_id ?? 0), shapeId: r.shape_id ?? '', stopTimes: [],
-    });
+    };
+    if (today) trips.set(r.trip_id, trip);
+    if (yesterday) lateTrips.set(r.trip_id, trip);
   }
   for await (const r of rows('stop_times.txt', ['trip_id', 'arrival_time', 'departure_time', 'stop_id', 'stop_sequence'])) {
-    const trip = trips.get(r.trip_id);
+    const trip = trips.get(r.trip_id) ?? lateTrips.get(r.trip_id);
     if (!trip) continue;
     // The stop's own id string, so a million stop times do not each hold a copy of a line.
     const stopId = stops.get(r.stop_id)?.id ?? r.stop_id;
     trip.stopTimes.push({ stopId, sequence: +r.stop_sequence, arrival: seconds(r.arrival_time), departure: seconds(r.departure_time) });
   }
 
+  // ponytail: the whole previous day's stop times are held until here, so loading peaks above what the
+  // index keeps; a first pass over stop_times.txt for each trip's last time would bound it, if peak matters.
+  for (const [id, trip] of lateTrips) {
+    if (Math.max(...trip.stopTimes.flatMap((st) => [st.arrival ?? 0, st.departure ?? 0])) <= 86_400) lateTrips.delete(id);
+  }
+
   const tripsAtStop = new Map<string, string[]>();
   const shapeIds = new Set<string>();
-  for (const trip of trips.values()) {
+  // A Set, so a trip in both maps is listed once at each stop.
+  for (const trip of new Set([...trips.values(), ...lateTrips.values()])) {
     trip.stopTimes.sort((a, b) => a.sequence - b.sequence);
     shapeIds.add(trip.shapeId);
     for (const { stopId } of trip.stopTimes) {
@@ -96,7 +110,22 @@ export async function loadServiceDay(zipPath: string, day: string): Promise<Stat
   }
   for (const points of shapes.values()) points.sort((a, b) => a.sequence - b.sequence);
 
-  return { day, stops, routes, trips, tripsAtStop, shapes };
+  return { day, previousDay, stops, routes, trips, lateTrips, tripsAtStop, shapes };
+}
+
+// The service_ids running on day, after calendar_dates.txt's exceptions; date is day at UTC midnight.
+async function servicesOn(rows: (name: string, columns: string[]) => AsyncGenerator<Record<string, string>>, day: string, date: Date): Promise<Set<string>> {
+  const weekday = WEEKDAYS[date.getUTCDay()];
+  const running = new Set<string>();
+  for await (const r of rows('calendar.txt', ['service_id', 'start_date', 'end_date', ...WEEKDAYS])) {
+    if (r[weekday] === '1' && r.start_date <= day && day <= r.end_date) running.add(r.service_id);
+  }
+  for await (const r of rows('calendar_dates.txt', ['service_id', 'date', 'exception_type'])) {
+    if (r.date !== day) continue;
+    if (r.exception_type === '1') running.add(r.service_id);
+    if (r.exception_type === '2') running.delete(r.service_id);
+  }
+  return running;
 }
 
 function seconds(time: string | undefined): number | undefined {
@@ -248,5 +277,7 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
   for (const trip of index.trips.values()) stopTimes += trip.stopTimes.length;
   for (const points of index.shapes.values()) shapePoints += points.length;
   console.log(`day ${day}: ${index.trips.size} trips, ${stopTimes} stop times, ${index.shapes.size} shapes (${shapePoints} points), ${index.stops.size} stops, ${index.routes.size} routes`);
+  const shared = [...index.lateTrips.keys()].filter((id) => index.trips.has(id)).length;
+  console.log(`late trips from ${index.previousDay}: ${index.lateTrips.size}, of which ${shared} also run on ${day}`);
   console.log(`heap held by the index: ${(held / 1024 / 1024).toFixed(1)} MB (B4: ≤ 50 MB base)`);
 }
