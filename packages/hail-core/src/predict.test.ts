@@ -53,4 +53,12 @@ describe('predict', () => {
 
     expect(() => predict(shape, at(1_000), report, report, 30_000)).toThrow(RangeError);
   });
+
+  it('refuses a shape of fewer than two points, which has no line to measure along', () => {
+    const previous = { ...at(0), at: 0 };
+    const latest = { ...at(200), at: 20_000 };
+
+    expect(() => predict([at(0)], at(1_000), previous, latest, 30_000)).toThrow(RangeError);
+    expect(() => predict([], at(1_000), previous, latest, 30_000)).toThrow(RangeError);
+  });
 });

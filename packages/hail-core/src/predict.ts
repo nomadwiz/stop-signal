@@ -9,6 +9,7 @@ const M_PER_DEGREE = 6_371_000 * (Math.PI / 180);
 
 // Both numbers are measured along the shape. distanceM is negative once the vehicle is predicted past the stop.
 export function predict(shape: Point[], stop: Point, previous: Fix, latest: Fix, now: number): { distanceM: number; speedMps: number } {
+  if (shape.length < 2) throw new RangeError(`a shape of ${shape.length} points has no line to measure along`);
   if (!(latest.at > previous.at)) throw new RangeError(`latest report at ${latest.at} is not after the previous one at ${previous.at}`);
   // ponytail: flat-earth metres about the shape's first point, as actual-calls.ts does; good to well under a metre across a city.
   const kx = M_PER_DEGREE * Math.cos((shape[0].lat * Math.PI) / 180);
