@@ -1,4 +1,4 @@
-// C7: finds queued arrivals, two or more vehicles reaching one stop within one window D, in the oracle's calls (#21, #15, S9).
+// C7: finds queued arrivals, two or more vehicles reaching one stop within one window D, in the oracle's calls (#21, #15, S9, ADR-027).
 //
 // Usage: node packages/hail-service/src/queued-arrivals.ts <gtfs.zip> <YYYYMMDD> <archive root> <from-ms> <to-ms> <D-seconds,…>
 //   Derives the calls as actual-calls.ts does, then prints, for each D, the top 15 bus stops ranked by
@@ -27,8 +27,14 @@ export function arrivals(calls: Call[], windowMs: number): Arrival[] {
 }
 
 // Queued and single arrivals per stop over calls on bus routes (route_type 3), most queued first, ties by stop_id.
+// A call at its trip's first or last stop is left out (ADR-027): nobody boards at a last stop, and a first stop's
+// call is the vehicle arriving before its trip starts.
 export function rank(calls: Call[], index: StaticIndex, windowMs: number): { stopId: string; queued: number; single: number }[] {
-  const bus = calls.filter((c) => index.routes.get(index.trips.get(c.tripId)?.routeId ?? '')?.type === 3);
+  const bus = calls.filter((c) => {
+    const trip = index.trips.get(c.tripId);
+    const ends = [trip?.stopTimes[0]?.sequence, trip?.stopTimes.at(-1)?.sequence];
+    return index.routes.get(trip?.routeId ?? '')?.type === 3 && !ends.includes(c.stopSequence);
+  });
   const counts = new Map<string, { stopId: string; queued: number; single: number }>();
   for (const a of arrivals(bus, windowMs)) {
     const row = counts.get(a.stopId) ?? counts.set(a.stopId, { stopId: a.stopId, queued: 0, single: 0 }).get(a.stopId)!;
