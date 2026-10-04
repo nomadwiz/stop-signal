@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { callingAt } from '../../hail-core/src/resolve.ts';
 import { downloadFeed, GTFS_URL, loadServiceDay, parseCsvLine } from './gtfs-static.ts';
 
 // Built from fixtures/gtfs/*.txt, piped so every entry carries a data descriptor as AT's do,
@@ -273,5 +274,17 @@ describe('downloadFeed', () => {
     const dest = await tempPath('gtfs.zip');
 
     await expect(downloadFeed(dest, async () => new Response('', { status: 503 }))).rejects.toThrow('503');
+  });
+});
+
+describe('the loaded index as the resolver reads it', () => {
+  it("lets callingAt find the day's trips and the previous day's late trips at a stop", async () => {
+    // Tuesday's T-event runs past midnight into Wednesday; T-school is Wednesday's own and calls at A, not at C.
+    const index = await loadServiceDay(FIXTURE, '20261007');
+    const late = { report: { vehicleId: 'v1', tripId: 'T-event' }, predictedArrival: 2_000 };
+    const own = { report: { vehicleId: 'v2', tripId: 'T-school' }, predictedArrival: 1_000 };
+
+    expect(callingAt(index, 'A', [late, own])).toEqual([own, late]);
+    expect(callingAt(index, 'C', [late, own])).toEqual([]);
   });
 });
