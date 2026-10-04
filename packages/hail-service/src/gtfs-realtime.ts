@@ -1,7 +1,8 @@
-// C7: decodes archived GTFS-Realtime snapshots and measures R1, how many vehicle records carry a
-// trip_id in the timetable of the service days named (#20), and how many without one take their trip
-// from a trip update (#23). `gtfs-realtime-bindings` is imported here and nowhere else outside tests
-// (ADR-015 decision 3); hail-core never imports this module.
+// C7: turns each decoded GTFS-Realtime snapshot into the vehicle reports the resolver reads (#113).
+// Also measures R1 over archived snapshots: how many vehicle records carry a trip_id in the timetable of
+// the service days named (#20), and how many without one take their trip from a trip update (#23).
+// `gtfs-realtime-bindings` is imported here and nowhere else outside tests (ADR-015 decision 3);
+// hail-core never imports this module.
 //
 // Usage: node packages/hail-service/src/gtfs-realtime.ts <gtfs.zip> <YYYYMMDD[,YYYYMMDD…]> <archive root> <from-ms> <to-ms>
 //   Reads every <root>/*/<epoch-ms>.pb.gz that capture wrote with from-ms <= epoch-ms < to-ms, and
@@ -16,6 +17,7 @@ import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gunzipSync } from 'node:zlib';
 import bindings, { type transit_realtime } from 'gtfs-realtime-bindings';
+import type { VehicleReport } from '../../hail-core/src/resolve.ts';
 import { loadServiceDay, type StaticIndex } from './gtfs-static.ts';
 
 // earlierOnly: matched, but not through the last day named, such as a Friday trip seen on Saturday.
@@ -95,6 +97,25 @@ export function tripsFromUpdates(feed: transit_realtime.FeedMessage, index: Pick
     if (vehicleId && !vehicle.trip?.tripId && only?.length === 1) trips.set(vehicleId, only[0]);
   }
   return trips;
+}
+
+// C7's one way to read vehicles from a snapshot: a VehicleReport for each vehicle record whose trip is known (#113).
+// A tagged record keeps its trip_id and start date, whether or not the index holds the trip: the resolver decides.
+// An untagged one takes them from tripsFromUpdates, and is otherwise left out. at is the vehicle's own timestamp,
+// when it measured its position, not the snapshot's. A record with no vehicle id, position or timestamp is left out,
+// since Figure 4.3 makes all three mandatory; Saturday 03-10-2026 had none such in 4,715,345. trip.routeId is dropped (ADR-026).
+export function vehicleReports(feed: transit_realtime.FeedMessage, index: Pick<StaticIndex, 'trips' | 'lateTrips'>): VehicleReport[] {
+  const recovered = tripsFromUpdates(feed, index);
+  const reports: VehicleReport[] = [];
+  for (const { vehicle } of feed.entity) {
+    // A missing trip_id, start date or vehicle id decodes as '', and a missing timestamp as 0.
+    const vehicleId = vehicle?.vehicle?.id ?? '';
+    const at = Number(vehicle?.timestamp) * 1000;
+    const trip = vehicle?.trip?.tripId ? { tripId: vehicle.trip.tripId, startDate: vehicle.trip.startDate || undefined } : recovered.get(vehicleId);
+    if (!vehicleId || !vehicle?.position || !at || !trip) continue;
+    reports.push({ vehicleId, ...trip, lat: vehicle.position.latitude, lon: vehicle.position.longitude, at });
+  }
+  return reports;
 }
 
 const percent = (part: number, whole: number) => (whole ? `${((100 * part) / whole).toFixed(1)}%` : '—');
