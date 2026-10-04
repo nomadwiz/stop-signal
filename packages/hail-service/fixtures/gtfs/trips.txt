@@ -4,3 +4,4 @@ NX1,Weekend,T-weekend,Hibiscus Coast,0,S-weekend
 NX1,School,T-school,Hibiscus Coast,0,S-busway
 NX1,Ended,T-ended,Hibiscus Coast,0,S-busway
 NX1,Event,T-event,"Eden Park ""Gate A""",1,S-event
+NX1,Weekend,T-midnight,Hibiscus Coast,0,S-weekend
