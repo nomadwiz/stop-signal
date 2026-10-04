@@ -100,6 +100,37 @@ describe('scheduler', () => {
     expect(fired).toEqual(['later', 'tick']);
   });
 
+  // ADR-028 decision 1: due wakeups enter the queue before the event that arrives, the wakeup first on a tie.
+  it('submits an arriving event after every wakeup due by then: a wakeup at 100 and a tick at 100 apply as [wakeup, tick]', () => {
+    let now = 0;
+    const fired: string[] = [];
+    const wakeups = scheduler({ now: () => now }, eventLoop<string>((event) => fired.push(event)));
+    wakeups.at(100, 'wakeup');
+    wakeups.at(101, 'not yet');
+
+    now = 100;
+    wakeups.submit('tick');
+
+    expect(fired).toEqual(['wakeup', 'tick']);
+  });
+
+  it('loses no submitted event when applying a wakeup due before it throws', () => {
+    let now = 0;
+    const fired: string[] = [];
+    const enqueue = eventLoop<string>((event) => {
+      if (event === 'bad') throw new Error('bad wakeup');
+      fired.push(event);
+    });
+    const wakeups = scheduler({ now: () => now }, enqueue);
+    wakeups.at(100, 'bad');
+
+    now = 100;
+    expect(() => wakeups.submit('ack')).toThrow('bad wakeup');
+    wakeups.submit('tick');
+
+    expect(fired).toEqual(['ack', 'tick']);
+  });
+
   it('refuses a wakeup whose time is not a number, which no Clock reading could ever reach', () => {
     const wakeups = scheduler({ now: () => 0 }, eventLoop<string>(() => {}));
 
