@@ -29,6 +29,8 @@ export function scheduler<E>(clock: Clock, enqueue: (...events: E[]) => void) {
   let pending: { at: number; event: E }[] = [];
   return {
     at(at: number, event: E): void {
+      // NaN fails both `<= now` and `> now`, so wake() would drop it without a trace.
+      if (Number.isNaN(at)) throw new RangeError('a wakeup needs a time the Clock can reach');
       pending.push({ at, event });
     },
     wake(): void {
