@@ -9009,7 +9009,9 @@
   ],
   "timetable": {
     "source": "https://gtfs.at.govt.nz/gtfs.zip",
+    "size": 28728739,
     "sha256": "753ad236994319f8c49f3051a718fdb6eeee6feecd23cf639c962f191354ac76",
+    "md5": "8d814909a0f673b8098d9ec9faffc531",
     "trips": "Every trip in tripsAtStop(7177-4660a5ff) for 20261003, the previous day's late trips included, and every trip a kept trip update names, with the shapes, routes, stops and services they use.",
     "fixture": "gtfs.zip",
     "fixtureSha256": "2b06f50a722699e9799d53b1d2125224e1192b89497207a249e881a149abc3a4"
