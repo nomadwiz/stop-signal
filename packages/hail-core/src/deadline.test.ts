@@ -16,6 +16,8 @@ describe('stoppingBudget', () => {
 
   it('rejects a deceleration outside 0.9–1.47 m/s²', () => {
     expect(() => stoppingBudget(kmh(50), 0.89)).toThrow(RangeError);
+    expect(() => stoppingBudget(kmh(50), 1.48)).toThrow(RangeError);
+    expect(() => stoppingBudget(kmh(50), Number.NaN)).toThrow(RangeError);
   });
 });
 
@@ -50,6 +52,7 @@ describe('signalDeadline', () => {
   });
 
   it('rejects a deceleration outside 0.9–1.47 m/s², rather than clamping it', () => {
+    expect(() => signalDeadline(1_000, 500, v, 0.89)).toThrow(RangeError);
     expect(() => signalDeadline(1_000, 500, v, 1.48)).toThrow(RangeError);
     expect(() => signalDeadline(1_000, 500, v, Number.NaN)).toThrow(RangeError);
   });
