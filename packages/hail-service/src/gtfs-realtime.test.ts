@@ -173,6 +173,8 @@ describe('tripCoverage, recovered', () => {
 
 // A vehicle record as AT sends it: a position, the instant the vehicle measured it (epoch s), and a trip descriptor
 // carrying a route. Latitude and longitude are 32-bit floats on the wire, so these are values a float holds exactly.
+// A trip descriptor for Saturday's run of T1, as a tagged record carries it.
+const T1 = { tripId: 'T1', startDate: '20261003' };
 const located = (id: string, trip?: object, at = NOW - 8, latitude = -36.875, longitude = 174.75) => ({
   id,
   vehicle: { vehicle: { id }, position: { latitude, longitude }, timestamp: at, ...(trip && { trip }) },
@@ -210,10 +212,17 @@ describe('vehicleReports', () => {
     expect(vehicleReports(feed, INDEX)).toEqual([]);
   });
 
-  it('leaves out a record with no position or no fix time, which Figure 4.3 makes every report carry', () => {
+  it('keeps a tagged record with no start date, without one, for the resolver to turn away (ADR-025)', () => {
+    const feed = decoded([located('v1', { tripId: 'T1' })]);
+
+    expect(vehicleReports(feed, INDEX)[0].startDate).toBeUndefined();
+  });
+
+  it('leaves out a record with no vehicle id, position or fix time, which Figure 4.3 makes every report carry', () => {
     const feed = decoded([
-      { id: 'no position', vehicle: { vehicle: { id: 'no position' }, timestamp: NOW, trip: { tripId: 'T1', startDate: '20261003' } } },
-      { id: 'no time', vehicle: { vehicle: { id: 'no time' }, position: { latitude: -36.875, longitude: 174.75 }, trip: { tripId: 'T1', startDate: '20261003' } } },
+      { id: 'no position', vehicle: { vehicle: { id: 'no position' }, timestamp: NOW, trip: T1 } },
+      { id: 'no vehicle id', vehicle: { position: { latitude: -36.875, longitude: 174.75 }, timestamp: NOW, trip: T1 } },
+      { id: 'no time', vehicle: { vehicle: { id: 'no time' }, position: { latitude: -36.875, longitude: 174.75 }, trip: T1 } },
     ]);
 
     expect(vehicleReports(feed, INDEX)).toEqual([]);
@@ -221,8 +230,8 @@ describe('vehicleReports', () => {
 
   it("gives reports from two snapshots that predict takes as the vehicle's previous and latest fixes", () => {
     // 2^-9 degrees, about 217 m, north along a straight shape in 20 s.
-    const earlier = vehicleReports(decoded([located('v1', { tripId: 'T1', startDate: '20261003' }, NOW - 20, -36.875)]), INDEX);
-    const later = vehicleReports(decoded([located('v1', { tripId: 'T1', startDate: '20261003' }, NOW, -36.873046875)]), INDEX);
+    const earlier = vehicleReports(decoded([located('v1', T1, NOW - 20, -36.875)]), INDEX);
+    const later = vehicleReports(decoded([located('v1', T1, NOW, -36.873046875)]), INDEX);
 
     const { speedMps } = predict([{ lat: -36.88, lon: 174.75 }, { lat: -36.86, lon: 174.75 }], { lat: -36.865, lon: 174.75 }, earlier[0], later[0], NOW * 1000);
 
