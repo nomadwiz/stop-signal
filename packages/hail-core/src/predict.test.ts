@@ -34,6 +34,28 @@ describe('predict', () => {
     expect(distanceM).toBeCloseTo(700, 6);
   });
 
+  it('keeps a dwelling vehicle whose fix jitters backwards at speed 0 and where it was', () => {
+    const shape = [at(0), at(2_000)];
+    const stop = at(1_000);
+    const previous = { ...at(305), at: 0 };
+    const latest = { ...at(300), at: 20_000 };
+
+    const { distanceM, speedMps } = predict(shape, stop, previous, latest, 35_000);
+
+    expect(speedMps).toBe(0);
+    expect(distanceM).toBeCloseTo(700, 6);
+  });
+
+  it('flags a report more than one feed interval, 30 s, old at the instant as stale', () => {
+    const shape = [at(0), at(2_000)];
+    const stop = at(1_000);
+    const previous = { ...at(0), at: 0 };
+    const latest = { ...at(200), at: 20_000 };
+
+    expect(predict(shape, stop, previous, latest, 50_000).stale).toBe(false);
+    expect(predict(shape, stop, previous, latest, 50_001).stale).toBe(true);
+  });
+
   it('measures distance along the shape, around a corner', () => {
     // 500 m north, then 500 m east; the stop is 300 m past the corner.
     const shape = [at(0), at(500), at(500, 500)];
