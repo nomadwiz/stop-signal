@@ -1,0 +1,42 @@
+// C2: the single-threaded decision loop over one totally ordered queue (ADR-002, FR15, QR9).
+// Same events in, same order applied, so a replay reproduces the decision log.
+import type { Clock } from './clock.ts';
+
+// Returns enqueue. Each event gets the next sequence number, from 1, and is applied in that order.
+// An event enqueued while another is being applied waits its turn instead of running inside it.
+// Several events enqueued in one call are all queued before the first is applied.
+export function eventLoop<E>(apply: (event: E, seq: number) => void): (...events: E[]) => void {
+  const queue: E[] = [];
+  let seq = 0;
+  let applying = false;
+  return (...events) => {
+    queue.push(...events);
+    if (applying) return;
+    applying = true;
+    // A throw reaches whoever enqueued; the finally keeps the loop alive for the events after it.
+    // ponytail: those events wait for the next enqueue; drain them at once if the service ever runs on after a throw.
+    try {
+      while (queue.length > 0) apply(queue.shift()!, ++seq);
+    } finally {
+      applying = false;
+    }
+  };
+}
+
+// The deadline scheduler never sleeps (ADR-002): it holds wakeups, and wake() enqueues every one
+// the Clock has reached, earliest first, equal times in the order they were set (sort is stable).
+export function scheduler<E>(clock: Clock, enqueue: (...events: E[]) => void) {
+  let pending: { at: number; event: E }[] = [];
+  return {
+    at(at: number, event: E): void {
+      pending.push({ at, event });
+    },
+    wake(): void {
+      const now = clock.now();
+      const due = pending.filter((w) => w.at <= now).sort((a, b) => a.at - b.at);
+      pending = pending.filter((w) => w.at > now);
+      // One call, so a throw while applying one due wakeup cannot drop the ones after it.
+      enqueue(...due.map((w) => w.event));
+    },
+  };
+}
