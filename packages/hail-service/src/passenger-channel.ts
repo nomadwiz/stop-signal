@@ -15,10 +15,12 @@ export function passengerChannel(submit: (event: HailEvent) => void): Notificati
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' }).flushHeaders();
       const open = streams.get(handle) ?? new Set<ServerResponse>();
       streams.set(handle, open.add(res));
-      // ADR-032 decision 1: closing a stream submits connection-lost, even while the handle holds another open.
+      // ADR-032, annotated 05-10-2026: only the last open stream's close submits connection-lost. A device that
+      // reconnects can hold a new stream before its old one's close arrives, and that passenger is still connected.
       res.on('close', () => {
         open.delete(res);
-        if (open.size === 0) streams.delete(handle);
+        if (open.size > 0) return;
+        streams.delete(handle);
         // A throw here would escape an event listener and end the process. The event is lost with it, as a throw in
         // submit loses it on any route, and the error is reported where the host's journal keeps it.
         try {
