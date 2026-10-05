@@ -1,0 +1,47 @@
+{
+  "stopId": "7177-4660a5ff",
+  "day": "20261003",
+  "dS": 5.8,
+  "n": 1,
+  "class": "single",
+  "group": "single-on-both",
+  "calls": [
+    {
+      "tripId": "1153-07005-36600-2-a344bb5e",
+      "vehicleId": "24604",
+      "routeId": "70-205",
+      "stopSequence": 36,
+      "at": 1790978288000,
+      "atArrival": null,
+      "atArrivalClass": "single"
+    }
+  ],
+  "events": [
+    {
+      "at": 1790977988000,
+      "event": {
+        "kind": "register",
+        "handle": "cee7ff6f-a84a-4e2e-bb1b-cbd7e9dbff5d",
+        "stopId": "7177-4660a5ff",
+        "routeId": "70-205",
+        "leadTimeS": 0
+      }
+    },
+    {
+      "at": 1790977988000,
+      "event": {
+        "kind": "presence-start",
+        "handle": "cee7ff6f-a84a-4e2e-bb1b-cbd7e9dbff5d",
+        "stopId": "7177-4660a5ff"
+      }
+    },
+    {
+      "at": 1790978288000,
+      "event": {
+        "kind": "presence-end",
+        "handle": "cee7ff6f-a84a-4e2e-bb1b-cbd7e9dbff5d",
+        "stopId": "7177-4660a5ff"
+      }
+    }
+  ]
+}
