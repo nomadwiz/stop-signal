@@ -9,7 +9,9 @@
     // imports and rejects syntax that emits code, such as enums.
     "allowImportingTsExtensions": true,
     "erasableSyntaxOnly": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    // The console is React (ADR-015 decision 2); Vite's own transform compiles its JSX the same way.
+    "jsx": "react-jsx"
   },
   "include": ["packages/*/src", "test"]
 }
