@@ -111,6 +111,19 @@ describe('predict', () => {
     expect(distanceM).toBeCloseTo(1_720, 6);
   });
 
+  it('stops a carried match at the previous match plus 25 m/s × the interval, even part way along a segment (ADR-022 decision 5)', () => {
+    // One 2,000 m segment: from 100 m along, 20 s allow 100 + 25 × 20 = 600 m, though the latest fix lies at 1,500 m.
+    const shape = [at(0), at(2_000)];
+    const previous = { ...at(100), at: 0 };
+    const latest = { ...at(1_500), at: 20_000 };
+
+    const { distanceM, speedMps, alongM } = predict(shape, at(1_800), previous, latest, 20_000, 100);
+
+    expect(alongM).toBeCloseTo(600, 6);
+    expect(speedMps).toBeCloseTo(25, 6);
+    expect(distanceM).toBeCloseTo(1_200, 6);
+  });
+
   it('without previousAlongM, equals the nearest-overall method: both reports matched over the whole shape (ADR-022 decision 5, as amended)', () => {
     // The same two fixes with no carried match: the latest, 5 m from the second pass, is matched there, 1,420 m along.
     const previous = { ...at(0, 400), at: 0 };
