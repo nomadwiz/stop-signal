@@ -12,6 +12,7 @@ import { callingAt, type VehicleReport } from '../../hail-core/src/resolve.ts';
 import { actualCalls, CALL_RADIUS_M } from './actual-calls.ts';
 import { snapshots, vehicleReports } from './gtfs-realtime.ts';
 import { loadServiceDay, type StaticIndex } from './gtfs-static.ts';
+import { windowsArg } from './queued-arrivals.ts';
 import { scenarios, type Scenario } from './scenarios.ts';
 
 // ADR-023's service default, the deceleration behind QR1's 17.4 s bound.
@@ -22,8 +23,9 @@ export interface Snapshot { at: number; reports: VehicleReport[] }
 // For a stop and the snapshots in time order: the vehicle a hail on a route, armed from `from` to `to`, commits on,
 // and when; null when it commits on none. The commit is ADR-037's: on the nearest calling vehicle of the route
 // (ADR-036), one feed interval before its deadline at DECEL_MPS2, or at once if that instant has passed; never on a
-// stale prediction (decision 35); and on a stopped vehicle at once when it is no further than its previous stop plus
-// CALL_RADIUS_M, otherwise not until it moves (decision 52). A passed deadline commits nothing (ADR-023).
+// stale prediction (ADR-023's and ADR-037's [DECIDED:05-10-2026]); and on a stopped vehicle at once when it is no
+// further than its previous stop plus CALL_RADIUS_M, otherwise not until it moves (ADR-037's [DECIDED:05-10-2026] on a
+// stopped vehicle). A passed deadline commits nothing (ADR-023).
 export function commits(index: StaticIndex, stopId: string, snaps: Snapshot[]) {
   const stop = index.stops.get(stopId)!;
   const tripOf = (r: VehicleReport) => (r.startDate === index.previousDay ? index.lateTrips : index.trips).get(r.tripId!);
@@ -36,6 +38,8 @@ export function commits(index: StaticIndex, stopId: string, snaps: Snapshot[]) {
       if (!fixes.some((f) => f.at === r.at)) fixes.push(r);
     }
   }
+  // In fix order, as actual-calls.ts keeps them, in case a feed re-serves an older fix in a later snapshot.
+  for (const fixes of runs.values()) fixes.sort((a, b) => a.at - b.at);
 
   // Metres along a report's trip shape from the trip's stop before stopId to stopId, plus CALL_RADIUS_M; -1 when stopId
   // is its first stop, so no stopped vehicle on it is due.
@@ -86,7 +90,7 @@ export interface Tally { calls: number; right: number; wrong: number; none: numb
 
 // Each passenger group's commit, scored against its target call: the first call of its route in the arrival (ADR-035
 // decision 3), armed from its registration to that call. A call is in a group by its own class on the oracle's times and
-// on AT's arrival times (ADR-034 decision 2). One passenger per route is enough: N passengers on a route resolve alike.
+// on AT's arrival times (ADR-034 decision 2). Each call counts once: N passengers on a route resolve alike.
 export function m1(index: StaticIndex, stopId: string, snaps: Snapshot[], built: Scenario[]): Record<Group, Tally> {
   const commitOf = commits(index, stopId, snaps);
   const tally: Record<Group, Tally> = {
@@ -95,8 +99,10 @@ export function m1(index: StaticIndex, stopId: string, snaps: Snapshot[], built:
     disputed: { calls: 0, right: 0, wrong: 0, none: 0 },
   };
   for (const s of built) {
+    const counted = new Set<string>();
     for (const { at, event } of s.events) {
-      if (event.kind !== 'register') continue;
+      if (event.kind !== 'register' || counted.has(event.routeId)) continue;
+      counted.add(event.routeId);
       const target = s.calls.find((c) => c.routeId === event.routeId)!;
       const row = tally[target.atArrivalClass === s.class ? (`${s.class}-on-both` as const) : 'disputed'];
       const c = commitOf(event.routeId, at, target.at);
@@ -113,11 +119,7 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
     console.error('Usage: node packages/hail-service/src/m1.ts <gtfs.zip> <YYYYMMDD> <archive root> <from-ms> <to-ms> <stop_id> <D-seconds,…>');
     process.exit(1);
   }
-  const ds = windows.split(',').map(Number);
-  if (![Number(from), Number(to), ...ds].every((x) => Number.isFinite(x) && x > 0)) {
-    console.error(`from-ms, to-ms and every D must be positive numbers: ${from} ${to} ${windows}`);
-    process.exit(1);
-  }
+  const ds = windowsArg(from, to, windows);
   const index = await loadServiceDay(zipPath, day);
   // Only trips that call at the stop: callingAt turns every other one away.
   const calling = new Set(index.tripsAtStop.get(stopId));
@@ -134,9 +136,9 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
     const t = m1(index, stopId, snaps, scenarios(calls, observed, index, stopId, d, 1));
     const all = Object.values(t);
     console.log(`\nD = ${d} s\n\n| Class | Calls | M1 |\n| --- | --- | --- |`);
-    console.log(`| Single on both | ${t['single-on-both'].calls} | ${share(t['single-on-both'])} |`);
-    console.log(`| Queued on both | ${t['queued-on-both'].calls} | ${share(t['queued-on-both'])} |`);
-    console.log(`| Disputed (class differs with AT's arrival times) | ${t.disputed.calls} | ${share(t.disputed)} |`);
+    for (const [group, label] of [['single-on-both', 'Single on both'], ['queued-on-both', 'Queued on both'], ['disputed', "Disputed (class differs with AT's arrival times)"]] as const) {
+      console.log(`| ${label} | ${t[group].calls} | ${share(t[group])} |`);
+    }
     console.log(`\nNot right: ${all.reduce((n, x) => n + x.wrong, 0)} on the wrong vehicle, ${all.reduce((n, x) => n + x.none, 0)} with no commit before the call.`);
   }
 }
