@@ -9,7 +9,7 @@ import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { HailEvent } from '../../hail-core/src/events.ts';
-import { actualCalls, type Call, type Observed } from './actual-calls.ts';
+import { actualCalls, observedKey, type Call, type Observed } from './actual-calls.ts';
 import { loadServiceDay, type StaticIndex } from './gtfs-static.ts';
 import { arrivals, boardable } from './queued-arrivals.ts';
 
@@ -31,7 +31,6 @@ export interface Scenario {
 }
 
 const classOf = (a: { vehicles: number }): Class => (a.vehicles >= 2 ? 'queued' : 'single');
-const key = (c: Call) => `${c.tripId}|${c.startDate}|${c.stopSequence}`;
 
 // A UUID v4 (ADR-032) drawn from a hash, so the same scenario always gets the same handles.
 function handle(seed: string): string {
@@ -48,8 +47,8 @@ export function scenarios(calls: Call[], observed: Map<string, Observed>, index:
   const routeOf = (c: Call) => index.trips.get(c.tripId)!.routeId;
   // Each call's class when AT's arrival, never its departure, stands in for the oracle's time (ADR-034, ADR-035 decision 4).
   const atClass = new Map<string, Class>();
-  for (const a of arrivals(mine.map((c) => ({ ...c, at: observed.get(key(c))?.arrival ?? c.at })), dS * 1000)) {
-    for (const c of a.calls) atClass.set(key(c), classOf(a));
+  for (const a of arrivals(mine.map((c) => ({ ...c, at: observed.get(observedKey(c))?.arrival ?? c.at })), dS * 1000)) {
+    for (const c of a.calls) atClass.set(observedKey(c), classOf(a));
   }
 
   return arrivals(mine, dS * 1000).map((a) => {
@@ -57,7 +56,7 @@ export function scenarios(calls: Call[], observed: Map<string, Observed>, index:
     const cls = classOf(a);
     const scenarioCalls = a.calls.map((c) => ({
       tripId: c.tripId, vehicleId: c.vehicleId, routeId: routeOf(c), stopSequence: c.stopSequence, at: c.at,
-      atArrival: observed.get(key(c))?.arrival ?? null, atArrivalClass: atClass.get(key(c))!,
+      atArrival: observed.get(observedKey(c))?.arrival ?? null, atArrivalClass: atClass.get(observedKey(c))!,
     }));
     const disputed = scenarioCalls.some((c) => c.atArrivalClass !== cls);
 
