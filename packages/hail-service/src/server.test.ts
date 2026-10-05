@@ -184,25 +184,29 @@ describe('hailServer, HailApi', () => {
     expect(applied).toEqual([{ kind: 'connection-lost', handle }]);
   });
 
-  // ADR-032 decision 1: closing a stream submits connection-lost, even while the handle holds another open.
-  it('sends a handle\'s outcomes to each stream it holds open, and submits connection-lost whenever one closes', async () => {
+  // ADR-032, annotated 05-10-2026: only the last of a handle's open streams submits connection-lost on closing,
+  // because a device that reconnects can hold a new stream before its old one's close reaches the server.
+  it('submits nothing when one of a handle\'s two streams closes, and connection-lost when the last one does', async () => {
     const { base, applied, passengers } = await serve();
     const first = new AbortController();
-    const firstStream = await post(`${base}/outcomes`, JSON.stringify({ handle }), first.signal);
-    const second = await post(`${base}/outcomes`, JSON.stringify({ handle }));
-
-    const secondReader = second.body!.pipeThrough(new TextDecoderStream()).getReader();
-    passengers.outcome(handle, { stop, route, outcome: 'confirmed' });
-    expect((await firstStream.body!.pipeThrough(new TextDecoderStream()).getReader().read()).value).toContain('"outcome":"confirmed"');
-    expect((await secondReader.read()).value).toContain('"outcome":"confirmed"');
+    const last = new AbortController();
+    await post(`${base}/outcomes`, JSON.stringify({ handle }), first.signal);
+    const lastStream = await post(`${base}/outcomes`, JSON.stringify({ handle }), last.signal);
+    const lastReader = lastStream.body!.pipeThrough(new TextDecoderStream()).getReader();
 
     first.abort();
-    await until(() => applied.length > 0);
-    expect(applied).toEqual([{ kind: 'connection-lost', handle }]);
+    // Wait until the server has seen the first stream close, so a connection-lost from it would be here by now.
+    await until(async () => (await new Promise<number>((resolve) => server.getConnections((_error, n) => resolve(n)))) === 1);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(applied).toEqual([]);
 
     // The stream still open keeps receiving its handle's outcomes.
-    passengers.outcome(handle, { stop, route, outcome: 'unacknowledged' });
-    expect((await secondReader.read()).value).toContain('"outcome":"unacknowledged"');
+    passengers.outcome(handle, { stop, route, outcome: 'confirmed' });
+    expect((await lastReader.read()).value).toContain('"outcome":"confirmed"');
+
+    last.abort();
+    await until(() => applied.length > 0);
+    expect(applied).toEqual([{ kind: 'connection-lost', handle }]);
   });
 
   // A throw from an event listener is uncaught, and an uncaught exception ends the process.
