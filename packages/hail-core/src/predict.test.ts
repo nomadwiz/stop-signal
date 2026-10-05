@@ -104,11 +104,23 @@ describe('predict', () => {
     const previous = { ...at(0, 400), at: 0 };
     const latest = { ...at(15, 600), at: 20_000 };
 
-    const { distanceM, speedMps, alongM } = predict(loop, loopStop, previous, latest, 20_000);
+    const { distanceM, speedMps, alongM } = predict(loop, loopStop, previous, latest, 20_000, 400);
 
     expect(alongM).toBeCloseTo(600, 6);
     expect(speedMps).toBeCloseTo(10, 6);
     expect(distanceM).toBeCloseTo(1_720, 6);
+  });
+
+  it('without previousAlongM, equals the nearest-overall method: both reports matched over the whole shape (ADR-022 decision 5, as amended)', () => {
+    // The same two fixes with no carried match: the latest, 5 m from the second pass, is matched there, 1,420 m along.
+    const previous = { ...at(0, 400), at: 0 };
+    const latest = { ...at(15, 600), at: 20_000 };
+
+    const { distanceM, speedMps, alongM } = predict(loop, loopStop, previous, latest, 20_000);
+
+    expect(alongM).toBeCloseTo(1_420, 6);
+    expect(speedMps).toBeCloseTo(51, 6);
+    expect(distanceM).toBeCloseTo(900, 6);
   });
 
   it('refuses two reports that are not in time order, since no speed follows from them', () => {
