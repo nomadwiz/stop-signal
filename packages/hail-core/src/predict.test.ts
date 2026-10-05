@@ -82,6 +82,35 @@ describe('predict', () => {
     expect(distanceM).toBeCloseTo(500, 6);
   });
 
+  // A road driven twice, 20 m apart: 1,000 m east, 20 m north, 1,000 m back west on the second pass, then 500 m on.
+  // The stop is 300 m past the road's start on the way out of the loop, 2,320 m along the shape (ADR-022 decision 5).
+  const loop = [at(0), at(0, 1_000), at(20, 1_000), at(20), at(20, -500)];
+  const loopStop = at(20, -300);
+
+  it('keeps a vehicle on the second pass of a loop on that pass, matched on from its last match (ADR-022 decision 5)', () => {
+    // 1,620 m along, then 200 m further west at 10 m/s; the latest fix strays 15 m south, nearer the first pass.
+    const previous = { ...at(20, 400), at: 0 };
+    const latest = { ...at(5, 200), at: 20_000 };
+
+    const { distanceM, speedMps, alongM } = predict(loop, loopStop, previous, latest, 20_000, 1_620);
+
+    expect(alongM).toBeCloseTo(1_820, 6);
+    expect(speedMps).toBeCloseTo(10, 6);
+    expect(distanceM).toBeCloseTo(500, 6);
+  });
+
+  it('keeps a vehicle on the first pass of a loop from jumping ahead to the second pass (ADR-022 decision 5)', () => {
+    // 400 m along, then 600 m along at 10 m/s; the latest fix strays 15 m north, nearer the second pass.
+    const previous = { ...at(0, 400), at: 0 };
+    const latest = { ...at(15, 600), at: 20_000 };
+
+    const { distanceM, speedMps, alongM } = predict(loop, loopStop, previous, latest, 20_000);
+
+    expect(alongM).toBeCloseTo(600, 6);
+    expect(speedMps).toBeCloseTo(10, 6);
+    expect(distanceM).toBeCloseTo(1_720, 6);
+  });
+
   it('refuses two reports that are not in time order, since no speed follows from them', () => {
     const shape = [at(0), at(2_000)];
     const report = { ...at(300), at: 20_000 };
