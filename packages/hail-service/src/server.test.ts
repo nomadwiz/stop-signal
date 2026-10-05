@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { HailEvent } from '../../hail-core/src/events.ts';
 import { eventLoop, scheduler } from '../../hail-core/src/loop.ts';
 import { driverChannel } from './driver-channel.ts';
+import { passengerChannel } from './passenger-channel.ts';
 import { hailServer } from './server.ts';
 
 let server: Server;
@@ -14,16 +15,18 @@ afterEach(() => {
 
 // The real loop behind the server, so a test sees what the loop applies, not what the adapter meant to send.
 // A test may pass its own submit instead.
-async function serve(submit?: (event: HailEvent) => void): Promise<{ base: string; applied: HailEvent[]; channel: ReturnType<typeof driverChannel> }> {
+async function serve(submit?: (event: HailEvent) => void) {
   const applied: HailEvent[] = [];
   const wakeups = scheduler<HailEvent>({ now: () => 0 }, eventLoop((event) => applied.push(event)));
   const channel = driverChannel();
-  server = hailServer({ channel, submit: submit ?? wakeups.submit });
+  const passengers = passengerChannel(submit ?? wakeups.submit);
+  server = hailServer({ channel, passengers, submit: submit ?? wakeups.submit });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  return { base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, applied, channel };
+  return { base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, applied, channel, passengers };
 }
 
-const post = (url: string, body: string) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body });
+const post = (url: string, body: string, signal?: AbortSignal) =>
+  fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body, signal });
 
 describe('hailServer, the driver console routes', () => {
   it('applies an acknowledgement in the loop as a console-ack event', async () => {
@@ -120,3 +123,159 @@ describe('hailServer, the driver console routes', () => {
     expect((await fetch(`${base}${path}`, { method })).status).toBe(404);
   });
 });
+
+// ADR-032: five routes, each body allow-listed and capped, the handle a UUID v4 that only ever travels in a body.
+describe('hailServer, HailApi', () => {
+  const handle = '3f2b8c1e-9d4a-4e6b-8a2c-1b7d5e9f0a34';
+  const stop = '7177-4660a5ff';
+  const route = '30';
+
+  it('applies POST /register as a register event, mapping the wire names to the event\'s', async () => {
+    const { base, applied } = await serve();
+
+    const response = await post(`${base}/register`, JSON.stringify({ handle, stop, route, duration: 30 }));
+
+    expect(response.status).toBe(204);
+    expect(applied).toEqual([{ kind: 'register', handle, stopId: stop, routeId: route, leadTimeS: 30 }]);
+  });
+
+  it('applies POST /cancel as a cancel event naming the registration by handle, stop and route', async () => {
+    const { base, applied } = await serve();
+
+    const response = await post(`${base}/cancel`, JSON.stringify({ handle, stop, route }));
+
+    expect(response.status).toBe(204);
+    expect(applied).toEqual([{ kind: 'cancel', handle, stopId: stop, routeId: route }]);
+  });
+
+  it('applies POST /presence/start as a presence-start event, with no device time', async () => {
+    const { base, applied } = await serve();
+
+    const response = await post(`${base}/presence/start`, JSON.stringify({ handle, stop }));
+
+    expect(response.status).toBe(204);
+    expect(applied).toEqual([{ kind: 'presence-start', handle, stopId: stop }]);
+  });
+
+  it('applies POST /presence/end as a presence-end event, with no device time', async () => {
+    const { base, applied } = await serve();
+
+    const response = await post(`${base}/presence/end`, JSON.stringify({ handle, stop }));
+
+    expect(response.status).toBe(204);
+    expect(applied).toEqual([{ kind: 'presence-end', handle, stopId: stop }]);
+  });
+
+  it('holds POST /outcomes open, sends each outcome for its handle, and submits connection-lost when it closes', async () => {
+    const { base, applied, passengers } = await serve();
+    const controller = new AbortController();
+    const response = await post(`${base}/outcomes`, JSON.stringify({ handle }), controller.signal);
+    const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
+
+    passengers.outcome('a0000000-0000-4000-8000-000000000000', { stop, route, outcome: 'confirmed' });
+    passengers.outcome(handle, { stop, route, outcome: 'unacknowledged' });
+
+    expect(response.headers.get('content-type')).toBe('text/event-stream');
+    expect((await reader.read()).value).toBe('event: outcome\ndata: {"stop":"7177-4660a5ff","route":"30","outcome":"unacknowledged"}\n\n');
+    expect(applied).toEqual([]);
+
+    controller.abort();
+    await until(() => applied.length > 0);
+    expect(applied).toEqual([{ kind: 'connection-lost', handle }]);
+  });
+
+  // ADR-032 decision 1: closing a stream submits connection-lost, even while the handle holds another open.
+  it('sends a handle\'s outcomes to each stream it holds open, and submits connection-lost whenever one closes', async () => {
+    const { base, applied, passengers } = await serve();
+    const first = new AbortController();
+    const firstStream = await post(`${base}/outcomes`, JSON.stringify({ handle }), first.signal);
+    const second = await post(`${base}/outcomes`, JSON.stringify({ handle }));
+
+    const secondReader = second.body!.pipeThrough(new TextDecoderStream()).getReader();
+    passengers.outcome(handle, { stop, route, outcome: 'confirmed' });
+    expect((await firstStream.body!.pipeThrough(new TextDecoderStream()).getReader().read()).value).toContain('"outcome":"confirmed"');
+    expect((await secondReader.read()).value).toContain('"outcome":"confirmed"');
+
+    first.abort();
+    await until(() => applied.length > 0);
+    expect(applied).toEqual([{ kind: 'connection-lost', handle }]);
+
+    // The stream still open keeps receiving its handle's outcomes.
+    passengers.outcome(handle, { stop, route, outcome: 'unacknowledged' });
+    expect((await secondReader.read()).value).toContain('"outcome":"unacknowledged"');
+  });
+
+  // A throw from an event listener is uncaught, and an uncaught exception ends the process.
+  it('keeps serving when applying the connection-lost event throws', async () => {
+    let lost = 0;
+    const { base } = await serve((event) => {
+      if (event.kind === 'connection-lost') {
+        lost++;
+        throw new Error('apply failed');
+      }
+    });
+    const controller = new AbortController();
+    await post(`${base}/outcomes`, JSON.stringify({ handle }), controller.signal);
+
+    controller.abort();
+    await until(() => lost > 0);
+
+    expect((await post(`${base}/presence/start`, JSON.stringify({ handle, stop }))).status).toBe(204);
+  });
+
+  it.each([
+    ['/register', { handle, stop, route, duration: 30, lat: -36.86698 }],
+    ['/register', { handle, stop, route, duration: 30, location: { latitude: -36.86698, longitude: 174.77468 } }],
+    ['/cancel', { handle, stop, route, lon: 174.77468 }],
+    ['/presence/start', { handle, stop, coordinates: [174.77468, -36.86698] }],
+    ['/presence/end', { handle, stop, t: 1791000000000 }],
+    ['/outcomes', { handle, latitude: -36.86698 }],
+  ])('refuses %s with any key outside its allow-list, a coordinate under any name among them, and applies nothing', async (path, fields) => {
+    const { base, applied } = await serve();
+
+    expect((await post(`${base}${path}`, JSON.stringify(fields))).status).toBe(400);
+    expect(applied).toEqual([]);
+  });
+
+  it.each([
+    ['a handle that is not a UUID', { handle: 'passenger-1', stop, route, duration: 30 }],
+    ['a UUID that is not version 4', { handle: '3f2b8c1e-9d4a-1e6b-8a2c-1b7d5e9f0a34', stop, route, duration: 30 }],
+    ['a UUID whose variant is not RFC 9562\'s', { handle: '3f2b8c1e-9d4a-4e6b-ca2c-1b7d5e9f0a34', stop, route, duration: 30 }],
+    ['a fractional duration', { handle, stop, route, duration: 2.5 }],
+    ['a negative duration', { handle, stop, route, duration: -1 }],
+    ['a duration given as a string', { handle, stop, route, duration: '30' }],
+    ['an empty stop', { handle, stop: '', route, duration: 30 }],
+    ['a missing route', { handle, stop, duration: 30 }],
+  ])('refuses a registration with %s', async (_case, fields) => {
+    const { base, applied } = await serve();
+
+    expect((await post(`${base}/register`, JSON.stringify(fields))).status).toBe(400);
+    expect(applied).toEqual([]);
+  });
+
+  it.each([
+    ['/register', { stop, route, duration: 30 }],
+    ['/cancel', { stop, route }],
+    ['/presence/start', { stop }],
+    ['/presence/end', { stop }],
+    ['/outcomes', {}],
+  ])('refuses %s from a handle not shaped as a UUID v4, the credential (ADR-032 decision 5)', async (path, fields) => {
+    const { base, applied } = await serve();
+
+    expect((await post(`${base}${path}`, JSON.stringify({ handle: 'passenger-1', ...fields }))).status).toBe(400);
+    expect(applied).toEqual([]);
+  });
+
+  it('accepts the upper-case handle iOS writes, and a duration of 0', async () => {
+    const { base, applied } = await serve();
+
+    const response = await post(`${base}/register`, JSON.stringify({ handle: handle.toUpperCase(), stop, route, duration: 0 }));
+
+    expect(response.status).toBe(204);
+    expect(applied).toEqual([{ kind: 'register', handle: handle.toUpperCase(), stopId: stop, routeId: route, leadTimeS: 0 }]);
+  });
+});
+
+async function until(condition: () => boolean | Promise<boolean>): Promise<void> {
+  while (!(await condition())) await new Promise((resolve) => setImmediate(resolve));
+}
