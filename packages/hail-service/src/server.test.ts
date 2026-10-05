@@ -191,16 +191,18 @@ describe('hailServer, HailApi', () => {
     const firstStream = await post(`${base}/outcomes`, JSON.stringify({ handle }), first.signal);
     const second = await post(`${base}/outcomes`, JSON.stringify({ handle }));
 
+    const secondReader = second.body!.pipeThrough(new TextDecoderStream()).getReader();
     passengers.outcome(handle, { stop, route, outcome: 'confirmed' });
-    for (const response of [firstStream, second]) {
-      const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
-      expect((await reader.read()).value).toContain('"outcome":"confirmed"');
-      reader.releaseLock();
-    }
+    expect((await firstStream.body!.pipeThrough(new TextDecoderStream()).getReader().read()).value).toContain('"outcome":"confirmed"');
+    expect((await secondReader.read()).value).toContain('"outcome":"confirmed"');
 
     first.abort();
     await until(() => applied.length > 0);
     expect(applied).toEqual([{ kind: 'connection-lost', handle }]);
+
+    // The stream still open keeps receiving its handle's outcomes.
+    passengers.outcome(handle, { stop, route, outcome: 'unacknowledged' });
+    expect((await secondReader.read()).value).toContain('"outcome":"unacknowledged"');
   });
 
   // A throw from an event listener is uncaught, and an uncaught exception ends the process.
