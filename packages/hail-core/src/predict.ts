@@ -26,7 +26,7 @@ export function predict(
   const xy = ({ lat, lon }: Point) => [(lon - shape[0].lon) * kx, (lat - shape[0].lat) * M_PER_DEGREE];
   const points = shape.map(xy);
 
-  // Metres along the shape to the point on it nearest p, among the segments that reach fromM and start by toM.
+  // Metres along the shape to the point on it nearest p, among the segments that reach fromM, and no further than toM.
   const along = (p: Point, fromM = 0, toM = Infinity) => {
     const [x, y] = xy(p);
     let best = { d: Infinity, m: 0 };
@@ -37,7 +37,7 @@ export function predict(
       const dx = bx - ax;
       const dy = by - ay;
       const length = Math.hypot(dx, dy);
-      const f = length ? Math.min(1, Math.max(0, ((x - ax) * dx + (y - ay) * dy) / (length * length))) : 0;
+      const f = length ? Math.min(1, (toM - start) / length, Math.max(0, ((x - ax) * dx + (y - ay) * dy) / (length * length))) : 0;
       const d = Math.hypot(ax + f * dx - x, ay + f * dy - y);
       if (start + length >= fromM && start <= toM && d < best.d) best = { d, m: start + f * length };
       start += length;
