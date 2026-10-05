@@ -25,6 +25,7 @@ export interface Call { tripId: string; startDate: string; vehicleId: string; st
 
 // AT's own observed times at a stop, epoch ms, keyed `tripId|startDate|stopSequence`. Used only to check the calls against.
 export interface Observed { arrival?: number; departure?: number }
+export const observedKey = (c: { tripId: string; startDate: string; stopSequence: number | null | undefined }) => `${c.tripId}|${c.startDate}|${c.stopSequence}`;
 
 interface Fix { at: number; lat: number; lon: number }
 
@@ -46,7 +47,7 @@ export async function actualCalls(index: StaticIndex, root: string, from: number
       const trip = tripUpdate?.trip;
       if (trip?.tripId && trip.startDate === index.day && index.trips.has(trip.tripId)) {
         for (const update of tripUpdate!.stopTimeUpdate ?? []) {
-          const key = `${trip.tripId}|${index.day}|${update.stopSequence}`;
+          const key = observedKey({ tripId: trip.tripId, startDate: index.day, stopSequence: update.stopSequence });
           for (const kind of ['arrival', 'departure'] as const) {
             const ev = update[kind];
             // An observation, not a prediction: no uncertainty (unset decodes as 0) and not after the snapshot was made.
@@ -88,7 +89,7 @@ export function agreement(calls: Call[], observed: Map<string, Observed>, tolera
   const found = new Set<string>();
   const tracked = new Set<string>();
   for (const c of calls) {
-    const key = `${c.tripId}|${c.startDate}|${c.stopSequence}`;
+    const key = observedKey(c);
     found.add(key);
     tracked.add(`${c.tripId}|${c.startDate}`);
     const o = observed.get(key);
