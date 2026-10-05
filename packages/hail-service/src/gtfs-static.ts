@@ -212,6 +212,11 @@ async function readCentralDirectory(zipPath: string): Promise<Map<string, Entry>
   }
 }
 
+// Every row of one file in the zip, keyed in the header's order, for a tool that copies rows (cut-fixtures.ts).
+export async function* zipRows(zipPath: string, name: string): AsyncGenerator<Record<string, string>> {
+  yield* readRows(zipPath, await readCentralDirectory(zipPath), name, []);
+}
+
 // Yields each row as {column: value}. Every file read is required, though GTFS makes some optional:
 // AT's feed carries them all, so a missing file, an empty one, or a missing column the caller reads
 // is an error, and fails here rather than loading a thinner or empty day.
