@@ -14,8 +14,8 @@ const MAX_SPEED_MPS = 25;
 
 // distanceM and speedMps are measured along the shape; distanceM is negative once the vehicle is predicted past the stop.
 // stale is true when the latest report is more than one feed interval old at now. alongM is where the latest report sits
-// along the shape; the caller passes it back as previousAlongM with the vehicle's next report on the same trip, and
-// leaves previousAlongM out for a trip's first pair, whose previous report is then matched over the whole shape.
+// along the shape; the caller passes it back as previousAlongM with the vehicle's next report on the same trip. Without
+// previousAlongM, as for a trip's first pair, both reports are matched over the whole shape.
 export function predict(
   shape: Point[], stop: Point, previous: Fix, latest: Fix, now: number, previousAlongM?: number,
 ): { distanceM: number; speedMps: number; stale: boolean; alongM: number } {
@@ -45,11 +45,11 @@ export function predict(
     return best.m;
   };
 
-  // Matched on from the previous report's match, no further than MAX_SPEED_MPS allows, so a shape that runs along one
-  // road twice keeps the vehicle on the pass it is on (ADR-022 decision 5).
+  // Given the carried match, matched on from it, no further than MAX_SPEED_MPS allows, so a shape that runs along one
+  // road twice keeps the vehicle on the pass it is on; without it, nearest over the whole shape (ADR-022 decision 5).
   const first = previousAlongM ?? along(previous);
   const intervalS = (latest.at - previous.at) / 1000;
-  const last = along(latest, first, first + MAX_SPEED_MPS * intervalS);
+  const last = previousAlongM === undefined ? along(latest) : along(latest, first, first + MAX_SPEED_MPS * intervalS);
   // Clamped at 0: a bus does not reverse along its trip, and a dwelling bus's fixes jitter backwards (ADR-022).
   const speedMps = Math.max(0, (last - first) / intervalS);
   // Clamped at 0: a vehicle's timestamp can run 1–2 s past the instant, and nothing is predicted backwards
