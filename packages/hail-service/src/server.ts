@@ -67,24 +67,32 @@ async function route(req: IncomingMessage, res: ServerResponse, { channel, passe
     return;
   }
   if (request === 'POST /register') {
-    const r = await body(req, res, { handle: uuidV4, stop: nonEmptyString, route: nonEmptyString, duration: wholeSeconds });
-    if (r) accept({ kind: 'register', handle: r.handle as string, stopId: r.stop as string, routeId: r.route as string, leadTimeS: r.duration as number });
+    const registration = await body(req, res, { handle: uuidV4, stop: nonEmptyString, route: nonEmptyString, duration: wholeSeconds });
+    if (registration) {
+      const { handle, stop, route, duration } = registration as { handle: string; stop: string; route: string; duration: number };
+      accept({ kind: 'register', handle, stopId: stop, routeId: route, leadTimeS: duration });
+    }
     return;
   }
   if (request === 'POST /cancel') {
-    const r = await body(req, res, { handle: uuidV4, stop: nonEmptyString, route: nonEmptyString });
-    if (r) accept({ kind: 'cancel', handle: r.handle as string, stopId: r.stop as string, routeId: r.route as string });
+    const cancel = await body(req, res, { handle: uuidV4, stop: nonEmptyString, route: nonEmptyString });
+    if (cancel) {
+      const { handle, stop, route } = cancel as { handle: string; stop: string; route: string };
+      accept({ kind: 'cancel', handle, stopId: stop, routeId: route });
+    }
     return;
   }
   if (request === 'POST /presence/start' || request === 'POST /presence/end') {
-    const r = await body(req, res, { handle: uuidV4, stop: nonEmptyString });
-    const kind = request === 'POST /presence/start' ? 'presence-start' : 'presence-end';
-    if (r) accept({ kind, handle: r.handle as string, stopId: r.stop as string });
+    const presence = await body(req, res, { handle: uuidV4, stop: nonEmptyString });
+    if (presence) {
+      const { handle, stop } = presence as { handle: string; stop: string };
+      accept({ kind: request === 'POST /presence/start' ? 'presence-start' : 'presence-end', handle, stopId: stop });
+    }
     return;
   }
   if (request === 'POST /outcomes') {
-    const r = await body(req, res, { handle: uuidV4 });
-    if (r) passengers.stream(r.handle as string, res);
+    const outcomes = await body(req, res, { handle: uuidV4 });
+    if (outcomes) passengers.stream(outcomes.handle as string, res);
     return;
   }
   res.writeHead(404).end();
