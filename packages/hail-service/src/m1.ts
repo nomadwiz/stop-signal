@@ -41,11 +41,12 @@ export function commits(index: StaticIndex, stopId: string, snaps: Snapshot[]) {
   // In fix order, as actual-calls.ts keeps them, in case a feed re-serves an older fix in a later snapshot.
   for (const fixes of runs.values()) fixes.sort((a, b) => a.at - b.at);
   // Each fix's match along its trip's shape, carried on from the fix before it (ADR-022 decision 5). A run's first fix
-  // has none, and predict matches it over the whole shape.
+  // is matched over the whole shape, by predict with nothing to extrapolate.
   const alongs = new Map<VehicleReport, number>();
   for (const fixes of runs.values()) {
     const shape = index.shapes.get(tripOf(fixes[0])?.shapeId ?? '');
     if (!shape || shape.length < 2) continue;
+    alongs.set(fixes[0], predict(shape, stop, { ...fixes[0], at: fixes[0].at - 1 }, fixes[0], fixes[0].at).alongM);
     for (let k = 1; k < fixes.length; k++) alongs.set(fixes[k], predict(shape, stop, fixes[k - 1], fixes[k], fixes[k].at, alongs.get(fixes[k - 1])).alongM);
   }
 
