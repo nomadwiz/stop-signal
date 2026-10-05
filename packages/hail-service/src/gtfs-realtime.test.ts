@@ -6,7 +6,7 @@ import bindings from 'gtfs-realtime-bindings';
 import { describe, expect, it } from 'vitest';
 import type { StaticIndex, Trip } from './gtfs-static.ts';
 import { predict } from '../../hail-core/src/predict.ts';
-import { tripCoverage, tripsFromUpdates, vehicleReports } from './gtfs-realtime.ts';
+import { snapshots, tripCoverage, tripsFromUpdates, vehicleReports } from './gtfs-realtime.ts';
 
 const { FeedMessage } = bindings.transit_realtime;
 // One service day's trip_ids, as the counter takes them.
@@ -27,6 +27,25 @@ async function snapshot(root: string, at: number, entity: object[]): Promise<voi
 }
 
 const vehicle = (id: string, trip?: object) => ({ id, vehicle: { vehicle: { id }, ...(trip && { trip }) } });
+
+describe('snapshots', () => {
+  it('decodes each snapshot in the range once, in time order across date folders, and reads none outside it', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'rt-'));
+    // A minute either side of 00:00 UTC on 03-10-2026, so in two date folders; the later is written first.
+    const midnight = SATURDAY + 13 * HOUR;
+    await snapshot(root, midnight + 60_000, [vehicle('second')]);
+    await snapshot(root, midnight - 60_000, [vehicle('first')]);
+    // Either side of the range, and not a snapshot at all: decoding it would throw.
+    await mkdir(join(root, 'edges'));
+    await writeFile(join(root, 'edges', `${midnight - HOUR - 1}.pb.gz`), 'not gzip');
+    await writeFile(join(root, 'edges', `${midnight + HOUR}.pb.gz`), 'not gzip');
+
+    const read = [];
+    for await (const { at, feed } of snapshots(root, midnight - HOUR, midnight + HOUR)) read.push([at, feed.entity[0].id]);
+
+    expect(read).toEqual([[midnight - 60_000, 'first'], [midnight + 60_000, 'second']]);
+  });
+});
 
 describe('tripCoverage', () => {
   it('counts vehicle records, those carrying a trip_id, and those whose trip_id is in the day', async () => {
