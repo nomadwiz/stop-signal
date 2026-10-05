@@ -25,17 +25,18 @@ export interface Timetable {
   tripsAtStop: ReadonlyMap<string, readonly string[]>;
 }
 
-// predictedArrival is epoch ms, supplied by the caller from S2's prediction (#26). It is null when that
-// prediction puts the vehicle past the stop: distance along the trip's shape ≤ 0 (ADR-026).
+// distanceM is metres along the trip's shape to the stop, supplied by the caller from S2's prediction (ADR-022).
+// It is null when that prediction puts the vehicle past the stop: distance ≤ 0 (ADR-026).
 export interface Candidate {
   report: VehicleReport;
-  predictedArrival: number | null;
+  distanceM: number | null;
 }
 
-// The candidates not yet past the stop whose run calls at it, soonest first; a tie keeps input order.
+// The candidates not yet past the stop whose run calls at it, nearest along the shape first; a tie keeps input order.
+// Distance, not arrival time: a bus at speed 0 at a red light or an earlier stop keeps its place in line (ADR-036).
 // The run is the trip in the map the report's start date names, and no other (ADR-025). Both runs of a
 // shared trip_id have the same stop times (ADR-021 decision 1), so tripsAtStop answers for either.
-export function callingAt(timetable: Timetable, stopId: string, candidates: readonly Candidate[]): (Candidate & { predictedArrival: number })[] {
+export function callingAt(timetable: Timetable, stopId: string, candidates: readonly Candidate[]): (Candidate & { distanceM: number })[] {
   const { day, previousDay, trips, lateTrips } = timetable;
   const calling = new Set(timetable.tripsAtStop.get(stopId));
   const runs = ({ tripId, startDate }: VehicleReport) =>
@@ -43,6 +44,6 @@ export function callingAt(timetable: Timetable, stopId: string, candidates: read
     calling.has(tripId) &&
     ((startDate === day && trips.has(tripId)) || (startDate === previousDay && lateTrips.has(tripId)));
   return candidates
-    .filter((c): c is Candidate & { predictedArrival: number } => c.predictedArrival !== null && runs(c.report))
-    .sort((a, b) => a.predictedArrival - b.predictedArrival);
+    .filter((c): c is Candidate & { distanceM: number } => c.distanceM !== null && runs(c.report))
+    .sort((a, b) => a.distanceM - b.distanceM);
 }
