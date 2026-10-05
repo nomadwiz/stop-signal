@@ -48,17 +48,24 @@ export function rank(calls: Call[], index: StaticIndex, windowMs: number): { sto
   return [...counts.values()].sort((a, b) => b.queued - a.queued || a.stopId.localeCompare(b.stopId));
 }
 
+// The D windows a CLI names, in seconds, from its comma-separated argument. Exits when from-ms, to-ms or any D is
+// not a positive number. Shared by the CLIs of queued-arrivals.ts, scenarios.ts and m1.ts.
+export function windowsArg(from: string, to: string, windows: string): number[] {
+  const ds = windows.split(',').map(Number);
+  if (![Number(from), Number(to), ...ds].every((x) => Number.isFinite(x) && x > 0)) {
+    console.error(`from-ms, to-ms and every D must be positive numbers: ${from} ${to} ${windows}`);
+    process.exit(1);
+  }
+  return ds;
+}
+
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [zipPath, day, root, from, to, windows] = process.argv.slice(2);
   if (!zipPath || !day || !root || !from || !to || !windows) {
     console.error('Usage: node packages/hail-service/src/queued-arrivals.ts <gtfs.zip> <YYYYMMDD> <archive root> <from-ms> <to-ms> <D-seconds,…>');
     process.exit(1);
   }
-  const ds = windows.split(',').map(Number);
-  if (![Number(from), Number(to), ...ds].every((n) => Number.isFinite(n) && n > 0)) {
-    console.error(`from-ms, to-ms and every D must be positive numbers: ${from} ${to} ${windows}`);
-    process.exit(1);
-  }
+  const ds = windowsArg(from, to, windows);
   const index = await loadServiceDay(zipPath, day);
   const { calls } = await actualCalls(index, root, Number(from), Number(to));
   const ranks = ds.map((d) => rank(calls, index, d * 1000));

@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import type { HailEvent } from '../../hail-core/src/events.ts';
 import { actualCalls, observedKey, type Call, type Observed } from './actual-calls.ts';
 import { loadServiceDay, type StaticIndex } from './gtfs-static.ts';
-import { arrivals, boardable } from './queued-arrivals.ts';
+import { arrivals, boardable, windowsArg } from './queued-arrivals.ts';
 
 export const PASSENGERS = [1, 5];
 // How long before the arrival's first call a passenger registers and arrives, unless their route called later (ADR-035 decision 1).
@@ -91,11 +91,7 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
     console.error('Usage: node packages/hail-service/src/scenarios.ts <gtfs.zip> <YYYYMMDD> <archive root> <from-ms> <to-ms> <stop_id> <out dir> <D-seconds,…>');
     process.exit(1);
   }
-  const ds = windows.split(',').map(Number);
-  if (![Number(from), Number(to), ...ds].every((x) => Number.isFinite(x) && x > 0)) {
-    console.error(`from-ms, to-ms and every D must be positive numbers: ${from} ${to} ${windows}`);
-    process.exit(1);
-  }
+  const ds = windowsArg(from, to, windows);
   const index = await loadServiceDay(zipPath, day);
   const { calls, observed } = await actualCalls(index, root, Number(from), Number(to));
   for (const d of ds) {
