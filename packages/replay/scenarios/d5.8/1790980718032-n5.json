@@ -1,0 +1,290 @@
+{
+  "stopId": "7177-4660a5ff",
+  "day": "20261003",
+  "dS": 5.8,
+  "n": 5,
+  "class": "queued",
+  "group": "queued-on-both",
+  "calls": [
+    {
+      "tripId": "1153-07005-38400-2-a344bb5e",
+      "vehicleId": "24507",
+      "routeId": "70-205",
+      "stopSequence": 36,
+      "at": 1790980718032,
+      "atArrival": null,
+      "atArrivalClass": "queued"
+    },
+    {
+      "tripId": "1286-79922-40200-2-9b84ff6a",
+      "vehicleId": "16115",
+      "routeId": "INN-202",
+      "stopSequence": 18,
+      "at": 1790980721385,
+      "atArrival": null,
+      "atArrivalClass": "queued"
+    }
+  ],
+  "events": [
+    {
+      "at": 1790980418032,
+      "event": {
+        "kind": "register",
+        "handle": "696ee4d7-068f-44b1-9550-eda52cd2c9ea",
+        "stopId": "7177-4660a5ff",
+        "routeId": "70-205",
+        "leadTimeS": 0
+      }
+    },
+    {
+      "at": 1790980418032,
+      "event": {
+        "kind": "presence-start",
+        "handle": "696ee4d7-068f-44b1-9550-eda52cd2c9ea",
+        "stopId": "7177-4660a5ff"
+      }
+    },
+    {
+      "at": 1790980418032,
+      "event": {
+        "kind": "register",
+        "handle": "744ed54b-2e0e-4757-920b-fead43a81409",
+        "stopId": "7177-4660a5ff",
+        "routeId": "70-205",
+        "leadTimeS": 0
+      }
+    },
+    {
+      "at": 1790980418032,
+      "event": {
+        "kind": "presence-start",
+        "handle": "744ed54b-2e0e-4757-920b-fead43a81409",
+        "stopId": "7177-4660a5ff"
+      }
+    },
+    {
+      "at": 1790980418032,
+      "event": {
+        "kind": "register",
+        "handle": "9616673b-8ac6-4913-a670-9adb88f5877b",
+        "stopId": "7177-4660a5ff",
+        "routeId": "70-205",
+        "leadTimeS": 0
+      }
+    },
+    {
+      "at": 1790980418032,
+      "event": {
+        "kind": "presence-start",
+        "handle": "9616673b-8ac6-4913-a670-9adb88f5877b",
+        "stopId": "7177-4660a5ff"
+      }
+    },
+    {
+      "at": 1790980418032,
+      "event": {
+        "kind": "register",
+        "handle": "3f45251b-3e0b-4b80-8705-6bd20f8fa4e2",
+        "stopId": "7177-4660a5ff",
+        "routeId": "70-205",
+        "leadTimeS": 0
+      }
+    },
+    {
+      "at": 1790980418032,
+      "event": {
+        "kind": "presence-start",
+        "handle": "3f45251b-3e0b-4b80-8705-6bd20f8fa4e2",
+        "stopId": "7177-4660a5ff"
+      }
+    },
+    {
+      "at": 1790980418032,
+      "event": {
+        "kind": "register",
+        "handle": "8998c43e-c712-4e8b-9b15-8a1dc50bfcd3",
+        "stopId": "7177-4660a5ff",
+        "routeId": "70-205",
+        "leadTimeS": 0
+      }
+    },
+    {
+      "at": 1790980418032,
+      "event": {
+        "kind": "presence-start",
+        "handle": "8998c43e-c712-4e8b-9b15-8a1dc50bfcd3",
+        "stopId": "7177-4660a5ff"
+      }
+    },
+    {
+      "at": 1790980418032,
+      "event": {
+        "kind": "register",
+        "handle": "b354c56b-b53f-4472-b8ec-a0d752d0c3a9",
+        "stopId": "7177-4660a5ff",
+        "routeId": "INN-202",
+        "leadTimeS": 0
+      }
+    },
+    {
+      "at": 1790980418032,
+      "event": {
+        "kind": "presence-start",
+        "handle": "b354c56b-b53f-4472-b8ec-a0d752d0c3a9",
+        "stopId": "7177-4660a5ff"
+      }
+    },
+    {
+      "at": 1790980418032,
+      "event": {
+        "kind": "register",
+        "handle": "bd9e7de5-f9c6-4cc0-8c96-7880f8a8cc42",
+        "stopId": "7177-4660a5ff",
+        "routeId": "INN-202",
+        "leadTimeS": 0
+      }
+    },
+    {
+      "at": 1790980418032,
+      "event": {
+        "kind": "presence-start",
+        "handle": "bd9e7de5-f9c6-4cc0-8c96-7880f8a8cc42",
+        "stopId": "7177-4660a5ff"
+      }
+    },
+    {
+      "at": 1790980418032,
+      "event": {
+        "kind": "register",
+        "handle": "1e10970f-2b3e-4302-af9c-3a0a4e07406b",
+        "stopId": "7177-4660a5ff",
+        "routeId": "INN-202",
+        "leadTimeS": 0
+      }
+    },
+    {
+      "at": 1790980418032,
+      "event": {
+        "kind": "presence-start",
+        "handle": "1e10970f-2b3e-4302-af9c-3a0a4e07406b",
+        "stopId": "7177-4660a5ff"
+      }
+    },
+    {
+      "at": 1790980418032,
+      "event": {
+        "kind": "register",
+        "handle": "8901803b-b9ac-4d81-9648-01fc10d31e1f",
+        "stopId": "7177-4660a5ff",
+        "routeId": "INN-202",
+        "leadTimeS": 0
+      }
+    },
+    {
+      "at": 1790980418032,
+      "event": {
+        "kind": "presence-start",
+        "handle": "8901803b-b9ac-4d81-9648-01fc10d31e1f",
+        "stopId": "7177-4660a5ff"
+      }
+    },
+    {
+      "at": 1790980418032,
+      "event": {
+        "kind": "register",
+        "handle": "91627f7f-e82d-4817-ae5c-6cec12bcb144",
+        "stopId": "7177-4660a5ff",
+        "routeId": "INN-202",
+        "leadTimeS": 0
+      }
+    },
+    {
+      "at": 1790980418032,
+      "event": {
+        "kind": "presence-start",
+        "handle": "91627f7f-e82d-4817-ae5c-6cec12bcb144",
+        "stopId": "7177-4660a5ff"
+      }
+    },
+    {
+      "at": 1790980718032,
+      "event": {
+        "kind": "presence-end",
+        "handle": "696ee4d7-068f-44b1-9550-eda52cd2c9ea",
+        "stopId": "7177-4660a5ff"
+      }
+    },
+    {
+      "at": 1790980718032,
+      "event": {
+        "kind": "presence-end",
+        "handle": "744ed54b-2e0e-4757-920b-fead43a81409",
+        "stopId": "7177-4660a5ff"
+      }
+    },
+    {
+      "at": 1790980718032,
+      "event": {
+        "kind": "presence-end",
+        "handle": "9616673b-8ac6-4913-a670-9adb88f5877b",
+        "stopId": "7177-4660a5ff"
+      }
+    },
+    {
+      "at": 1790980718032,
+      "event": {
+        "kind": "presence-end",
+        "handle": "3f45251b-3e0b-4b80-8705-6bd20f8fa4e2",
+        "stopId": "7177-4660a5ff"
+      }
+    },
+    {
+      "at": 1790980718032,
+      "event": {
+        "kind": "presence-end",
+        "handle": "8998c43e-c712-4e8b-9b15-8a1dc50bfcd3",
+        "stopId": "7177-4660a5ff"
+      }
+    },
+    {
+      "at": 1790980721385,
+      "event": {
+        "kind": "presence-end",
+        "handle": "b354c56b-b53f-4472-b8ec-a0d752d0c3a9",
+        "stopId": "7177-4660a5ff"
+      }
+    },
+    {
+      "at": 1790980721385,
+      "event": {
+        "kind": "presence-end",
+        "handle": "bd9e7de5-f9c6-4cc0-8c96-7880f8a8cc42",
+        "stopId": "7177-4660a5ff"
+      }
+    },
+    {
+      "at": 1790980721385,
+      "event": {
+        "kind": "presence-end",
+        "handle": "1e10970f-2b3e-4302-af9c-3a0a4e07406b",
+        "stopId": "7177-4660a5ff"
+      }
+    },
+    {
+      "at": 1790980721385,
+      "event": {
+        "kind": "presence-end",
+        "handle": "8901803b-b9ac-4d81-9648-01fc10d31e1f",
+        "stopId": "7177-4660a5ff"
+      }
+    },
+    {
+      "at": 1790980721385,
+      "event": {
+        "kind": "presence-end",
+        "handle": "91627f7f-e82d-4817-ae5c-6cec12bcb144",
+        "stopId": "7177-4660a5ff"
+      }
+    }
+  ]
+}
