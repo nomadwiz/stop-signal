@@ -22,63 +22,63 @@ const timetable: Timetable = {
 
 describe('callingAt', () => {
   it('excludes an express trip that skips the stop', () => {
-    const express = { report: { ...FIX, vehicleId: 'v1', tripId: 'X', startDate: DAY }, predictedArrival: 1_000 };
-    const allStops = { report: { ...FIX, vehicleId: 'v2', tripId: 'A1', startDate: DAY }, predictedArrival: 2_000 };
+    const express = { report: { ...FIX, vehicleId: 'v1', tripId: 'X', startDate: DAY }, distanceM: 1_000 };
+    const allStops = { report: { ...FIX, vehicleId: 'v2', tripId: 'A1', startDate: DAY }, distanceM: 2_000 };
 
     expect(callingAt(timetable, 'S', [express, allStops])).toEqual([allStops]);
   });
 
-  it('separates two vehicles on one route by tripId, ordered by predicted arrival', () => {
-    const later = { report: { ...FIX, vehicleId: 'v1', tripId: 'A2', startDate: DAY }, predictedArrival: 90_000 };
-    const otherWay = { report: { ...FIX, vehicleId: 'v2', tripId: 'B', startDate: DAY }, predictedArrival: 10_000 };
-    const sooner = { report: { ...FIX, vehicleId: 'v3', tripId: 'A1', startDate: DAY }, predictedArrival: 30_000 };
+  it('separates two vehicles on one route by tripId, nearest along the shape first (ADR-036)', () => {
+    const further = { report: { ...FIX, vehicleId: 'v1', tripId: 'A2', startDate: DAY }, distanceM: 900 };
+    const otherWay = { report: { ...FIX, vehicleId: 'v2', tripId: 'B', startDate: DAY }, distanceM: 100 };
+    const nearer = { report: { ...FIX, vehicleId: 'v3', tripId: 'A1', startDate: DAY }, distanceM: 300 };
 
-    expect(callingAt(timetable, 'S', [later, otherWay, sooner])).toEqual([sooner, later]);
+    expect(callingAt(timetable, 'S', [further, otherWay, nearer])).toEqual([nearer, further]);
   });
 
   it('excludes a vehicle predicted past the stop, which arrives as null (ADR-026)', () => {
-    const past = { report: { ...FIX, vehicleId: 'v1', tripId: 'A1', startDate: DAY }, predictedArrival: null };
-    const coming = { report: { ...FIX, vehicleId: 'v2', tripId: 'A2', startDate: DAY }, predictedArrival: 5_000 };
+    const past = { report: { ...FIX, vehicleId: 'v1', tripId: 'A1', startDate: DAY }, distanceM: null };
+    const coming = { report: { ...FIX, vehicleId: 'v2', tripId: 'A2', startDate: DAY }, distanceM: 5_000 };
 
     expect(callingAt(timetable, 'S', [past, coming])).toEqual([coming]);
   });
 
   it("takes a start date of the day from the day's own trips (ADR-025)", () => {
-    const own = { report: { ...FIX, vehicleId: 'v1', tripId: 'A1', startDate: DAY }, predictedArrival: 1_000 };
-    const notLate = { report: { ...FIX, vehicleId: 'v2', tripId: 'A1', startDate: PREVIOUS }, predictedArrival: 2_000 };
+    const own = { report: { ...FIX, vehicleId: 'v1', tripId: 'A1', startDate: DAY }, distanceM: 1_000 };
+    const notLate = { report: { ...FIX, vehicleId: 'v2', tripId: 'A1', startDate: PREVIOUS }, distanceM: 2_000 };
 
     expect(callingAt(timetable, 'S', [own, notLate])).toEqual([own]);
   });
 
   it("takes a start date of the previous day from the previous day's late trips (ADR-025)", () => {
-    const late = { report: { ...FIX, vehicleId: 'v1', tripId: 'LATE', startDate: PREVIOUS }, predictedArrival: 1_000 };
-    const notToday = { report: { ...FIX, vehicleId: 'v2', tripId: 'LATE', startDate: DAY }, predictedArrival: 2_000 };
+    const late = { report: { ...FIX, vehicleId: 'v1', tripId: 'LATE', startDate: PREVIOUS }, distanceM: 1_000 };
+    const notToday = { report: { ...FIX, vehicleId: 'v2', tripId: 'LATE', startDate: DAY }, distanceM: 2_000 };
 
     expect(callingAt(timetable, 'S', [late, notToday])).toEqual([late]);
   });
 
   it('chooses the run of a trip_id in both maps by its start date, and excludes any other date (ADR-025)', () => {
-    const today = { report: { ...FIX, vehicleId: 'v1', tripId: 'SHARED', startDate: DAY }, predictedArrival: 1_000 };
-    const lastNight = { report: { ...FIX, vehicleId: 'v2', tripId: 'SHARED', startDate: PREVIOUS }, predictedArrival: 2_000 };
-    const older = { report: { ...FIX, vehicleId: 'v3', tripId: 'SHARED', startDate: '20261005' }, predictedArrival: 3_000 };
+    const today = { report: { ...FIX, vehicleId: 'v1', tripId: 'SHARED', startDate: DAY }, distanceM: 1_000 };
+    const lastNight = { report: { ...FIX, vehicleId: 'v2', tripId: 'SHARED', startDate: PREVIOUS }, distanceM: 2_000 };
+    const older = { report: { ...FIX, vehicleId: 'v3', tripId: 'SHARED', startDate: '20261005' }, distanceM: 3_000 };
 
     expect(callingAt(timetable, 'S', [today, lastNight, older])).toEqual([today, lastNight]);
   });
 
   it('excludes a vehicle with no start date (ADR-025)', () => {
-    const undated = { report: { ...FIX, vehicleId: 'v1', tripId: 'A1' }, predictedArrival: 1_000 };
+    const undated = { report: { ...FIX, vehicleId: 'v1', tripId: 'A1' }, distanceM: 1_000 };
 
     expect(callingAt(timetable, 'S', [undated])).toEqual([]);
   });
 
   it('excludes a vehicle with no tripId, since nothing else names its trip (ADR-019)', () => {
-    const untagged = { report: { ...FIX, vehicleId: 'v1', startDate: DAY }, predictedArrival: 1_000 };
+    const untagged = { report: { ...FIX, vehicleId: 'v1', startDate: DAY }, distanceM: 1_000 };
 
     expect(callingAt(timetable, 'S', [untagged])).toEqual([]);
   });
 
   it('returns nothing at a stop no trip calls at', () => {
-    expect(callingAt(timetable, 'nowhere', [{ report: { ...FIX, vehicleId: 'v1', tripId: 'A1', startDate: DAY }, predictedArrival: 0 }])).toEqual([]);
+    expect(callingAt(timetable, 'nowhere', [{ report: { ...FIX, vehicleId: 'v1', tripId: 'A1', startDate: DAY }, distanceM: 0 }])).toEqual([]);
   });
 
   it('gives VehicleReport no route field, so no route is read from the vehicle (m1-revised.md §4.4)', () => {
