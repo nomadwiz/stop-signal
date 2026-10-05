@@ -20,6 +20,17 @@ import bindings, { type transit_realtime } from 'gtfs-realtime-bindings';
 import type { VehicleReport } from '../../hail-core/src/resolve.ts';
 import { loadServiceDay, type StaticIndex } from './gtfs-static.ts';
 
+// Every snapshot capture archived under root with from <= its epoch-ms < to, decoded, in time order.
+// Keyed by time, never by folder: folders are UTC dates and a New Zealand day spans two.
+export async function* snapshots(root: string, from: number, to: number): AsyncGenerator<{ at: number; feed: transit_realtime.FeedMessage }> {
+  const files = (await readdir(root, { recursive: true }))
+    .filter((path) => path.endsWith('.pb.gz'))
+    .map((path) => ({ path, at: Number(basename(path, '.pb.gz')) }))
+    .filter(({ at }) => from <= at && at < to)
+    .sort((a, b) => a.at - b.at);
+  for (const { path, at } of files) yield { at, feed: bindings.transit_realtime.FeedMessage.decode(gunzipSync(await readFile(join(root, path)))) };
+}
+
 // earlierOnly: matched, but not through the last day named, such as a Friday trip seen on Saturday.
 // recovered: no trip_id, but tripsFromUpdates gives one.
 export interface Coverage { records: number; withTrip: number; matched: number; earlierOnly: number; recovered: number }

@@ -5,12 +5,9 @@
 //   Reads every <root>/*/<epoch-ms>.pb.gz with from-ms <= epoch-ms < to-ms, for the bus trips (route_type 3) of
 //   that one service day, and prints the error table for all of them, then for the routes named, by short name.
 import { realpathSync } from 'node:fs';
-import { readdir, readFile } from 'node:fs/promises';
-import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { gunzipSync } from 'node:zlib';
-import bindings from 'gtfs-realtime-bindings';
 import { predict, type Fix, type Point } from '../../hail-core/src/predict.ts';
+import { snapshots } from './gtfs-realtime.ts';
 import { loadServiceDay, type Route, type StaticIndex } from './gtfs-static.ts';
 
 // ADR-033 keeps a horizon only where the fixes either side of it are at most one feed interval apart (ADR-022).
@@ -27,9 +24,9 @@ export interface Track { tripId: string; vehicleId: string; route: Route; pairs:
 export function trackErrors(shape: Point[], fixes: Fix[], horizonsS: number[]): Pick<Track, 'pairs' | 'stale' | 'errors'> {
   // Distances are taken to the shape's end, so that one stop serves every instant; any point would do.
   const end = shape[shape.length - 1];
-  const at = (previous: Fix, latest: Fix, now: number) => predict(shape, end, previous, latest, now);
+  const predictAt = (previous: Fix, latest: Fix, now: number) => predict(shape, end, previous, latest, now);
   // Each fix's own distance to go, read through predict with nothing to extrapolate.
-  const togo = fixes.map((f) => at({ ...f, at: f.at - 1 }, f, f.at).distanceM);
+  const togo = fixes.map((f) => predictAt({ ...f, at: f.at - 1 }, f, f.at).distanceM);
   // The track's distance to go at t, interpolated between the fixes k - 1 and k either side of it.
   const between = (k: number, t: number) => togo[k - 1] + ((t - fixes[k - 1].at) / (fixes[k].at - fixes[k - 1].at)) * (togo[k] - togo[k - 1]);
 
@@ -38,13 +35,13 @@ export function trackErrors(shape: Point[], fixes: Fix[], horizonsS: number[]): 
   const errors: HorizonError[] = [];
   for (let i = 1; i < fixes.length - 1; i++) {
     pairs++;
-    if (at(fixes[i - 1], fixes[i], fixes[i + 1].at).stale) stale++;
+    if (predictAt(fixes[i - 1], fixes[i], fixes[i + 1].at).stale) stale++;
     for (const horizonS of horizonsS) {
       const t = fixes[i].at + horizonS * 1000;
       let k = i + 1;
       while (k < fixes.length && fixes[k].at < t) k++;
       if (k === fixes.length || fixes[k].at - fixes[k - 1].at > BRACKET_MS) continue;
-      const predicted = at(fixes[i - 1], fixes[i], t).distanceM;
+      const predicted = predictAt(fixes[i - 1], fixes[i], t).distanceM;
       errors.push({ horizonS, errorM: predicted - between(k, t), errorS: offset(fixes, togo, predicted, t) });
     }
   }
@@ -65,18 +62,10 @@ function offset(fixes: Fix[], togo: number[], target: number, t: number): number
   return best === null ? null : (t - best) / 1000;
 }
 
-// Every trip and vehicle's track in the archive, read as actual-calls.ts reads them, with its errors.
+// Every trip and vehicle's track in the archive, grouped as actual-calls.ts groups them, with its errors.
 export async function predictionErrors(index: StaticIndex, root: string, from: number, to: number, horizonsS = [15, 30]): Promise<Track[]> {
-  // Keyed by time, never by folder: folders are UTC dates and a New Zealand day spans two.
-  const files = (await readdir(root, { recursive: true }))
-    .filter((path) => path.endsWith('.pb.gz'))
-    .map((path) => ({ path, at: Number(basename(path, '.pb.gz')) }))
-    .filter(({ at }) => from <= at && at < to)
-    .sort((a, b) => a.at - b.at);
-
   const groups = new Map<string, { tripId: string; vehicleId: string; fixes: Fix[] }>();
-  for (const { path } of files) {
-    const feed = bindings.transit_realtime.FeedMessage.decode(gunzipSync(await readFile(join(root, path))));
+  for await (const { feed } of snapshots(root, from, to)) {
     for (const { vehicle } of feed.entity) {
       // A missing trip_id decodes as '', and a missing timestamp as 0.
       const tripId = vehicle?.trip?.tripId;
