@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Call } from './actual-calls.ts';
 import type { StaticIndex } from './gtfs-static.ts';
-import { arrivals, rank } from './queued-arrivals.ts';
+import { arrivals, rank, windowsArg } from './queued-arrivals.ts';
 
 const T = 1_790_000_000_000;
 const call = (stopId: string, vehicleId: string, seconds: number, tripId = `trip-${vehicleId}`): Call => ({
@@ -83,5 +83,21 @@ describe('rank', () => {
     const calls = [call('Z', 'V1', 0, 'bus-1'), call('Z', 'V2', 1, 'bus-2'), call('M', 'V1', 50, 'bus-1'), call('M', 'V2', 51, 'bus-2')];
 
     expect(rank(calls, index, 5_800).map((r) => r.stopId)).toEqual(['M', 'Z']);
+  });
+});
+
+describe('windowsArg', () => {
+  it("returns a CLI's D windows in seconds", () => {
+    expect(windowsArg('1790960530883', '1790983016489', '17.4,5.8')).toEqual([17.4, 5.8]);
+  });
+
+  it('exits when from-ms, to-ms or any D is not a positive number', () => {
+    const exit = vi.spyOn(process, 'exit').mockImplementation(() => { throw new Error('exit'); });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(() => windowsArg('1', '2', '17.4,x')).toThrow('exit');
+    expect(() => windowsArg('0', '2', '17.4')).toThrow('exit');
+    expect(exit).toHaveBeenCalledWith(1);
+    exit.mockRestore();
+    error.mockRestore();
   });
 });
