@@ -26,15 +26,19 @@ export function arrivals(calls: Call[], windowMs: number): Arrival[] {
   return result;
 }
 
-// Queued and single arrivals per stop over calls on bus routes (route_type 3), most queued first, ties by stop_id.
-// A call at its trip's first or last stop is left out (ADR-027): nobody boards at a last stop, and a first stop's
-// call is the vehicle arriving before its trip starts.
-export function rank(calls: Call[], index: StaticIndex, windowMs: number): { stopId: string; queued: number; single: number }[] {
-  const bus = calls.filter((c) => {
+// The calls on bus routes (route_type 3) that a passenger could board. A call at its trip's first or last stop is left
+// out (ADR-027): nobody boards at a last stop, and a first stop's call is the vehicle arriving before its trip starts.
+export function boardable(calls: Call[], index: StaticIndex): Call[] {
+  return calls.filter((c) => {
     const trip = index.trips.get(c.tripId);
     const ends = [trip?.stopTimes[0]?.sequence, trip?.stopTimes.at(-1)?.sequence];
     return index.routes.get(trip?.routeId ?? '')?.type === 3 && !ends.includes(c.stopSequence);
   });
+}
+
+// Queued and single arrivals per stop over boardable calls, most queued first, ties by stop_id.
+export function rank(calls: Call[], index: StaticIndex, windowMs: number): { stopId: string; queued: number; single: number }[] {
+  const bus = boardable(calls, index);
   const counts = new Map<string, { stopId: string; queued: number; single: number }>();
   for (const a of arrivals(bus, windowMs)) {
     const row = counts.get(a.stopId) ?? counts.set(a.stopId, { stopId: a.stopId, queued: 0, single: 0 }).get(a.stopId)!;
