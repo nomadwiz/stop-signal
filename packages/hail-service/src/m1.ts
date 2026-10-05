@@ -40,6 +40,14 @@ export function commits(index: StaticIndex, stopId: string, snaps: Snapshot[]) {
   }
   // In fix order, as actual-calls.ts keeps them, in case a feed re-serves an older fix in a later snapshot.
   for (const fixes of runs.values()) fixes.sort((a, b) => a.at - b.at);
+  // Each fix's match along its trip's shape, carried on from the fix before it (ADR-022 decision 5). A run's first fix
+  // has none, and predict matches it over the whole shape.
+  const alongs = new Map<VehicleReport, number>();
+  for (const fixes of runs.values()) {
+    const shape = index.shapes.get(tripOf(fixes[0])?.shapeId ?? '');
+    if (!shape || shape.length < 2) continue;
+    for (let k = 1; k < fixes.length; k++) alongs.set(fixes[k], predict(shape, stop, fixes[k - 1], fixes[k], fixes[k].at, alongs.get(fixes[k - 1])).alongM);
+  }
 
   // Metres along a report's trip shape from the trip's stop before stopId to stopId, plus CALL_RADIUS_M; -1 when stopId
   // is its first stop, so no stopped vehicle on it is due.
@@ -59,7 +67,7 @@ export function commits(index: StaticIndex, stopId: string, snaps: Snapshot[]) {
       const shape = index.shapes.get(trip?.shapeId ?? '');
       const previous = runs.get(run(r))!.findLast((f) => f.at < r.at);
       if (trip?.routeId !== routeId || !shape || shape.length < 2 || !previous) continue;
-      predicted.set(r, predict(shape, stop, previous, r, t));
+      predicted.set(r, predict(shape, stop, previous, r, t, alongs.get(previous)));
     }
     const [first] = callingAt(index, stopId, [...predicted].map(([report, p]) => ({ report, distanceM: p.distanceM > 0 ? p.distanceM : null })));
     return first && { report: first.report, ...predicted.get(first.report)! };
