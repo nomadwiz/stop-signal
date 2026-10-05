@@ -56,6 +56,19 @@ describe('predict', () => {
     expect(predict(shape, stop, previous, latest, 50_001).stale).toBe(true);
   });
 
+  it('predicts the latest report\'s position, not stale, at an instant before that report', () => {
+    const shape = [at(0), at(2_000)];
+    const stop = at(1_000);
+    const previous = { ...at(0), at: 0 };
+    const latest = { ...at(200), at: 20_000 };
+
+    const { distanceM, speedMps, stale } = predict(shape, stop, previous, latest, 18_000);
+
+    expect(speedMps).toBeCloseTo(10, 6);
+    expect(distanceM).toBeCloseTo(800, 6);
+    expect(stale).toBe(false);
+  });
+
   it('measures distance along the shape, around a corner', () => {
     // 500 m north, then 500 m east; the stop is 300 m past the corner.
     const shape = [at(0), at(500), at(500, 500)];

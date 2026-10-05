@@ -11,7 +11,8 @@ const inward = 'hail-core reaches only its own files; everything outside reaches
 const banned = (object, ...properties) => properties.map((property) => ({ object, property, message: useClock }));
 
 export default defineConfig(
-  { files: ['**/*.ts'], languageOptions: { parser: tsParser } },
+  { ignores: ['packages/console/dist/'] },
+  { files: ['**/*.{ts,tsx}'], languageOptions: { parser: tsParser } },
   {
     files: ['packages/hail-core/**'],
     rules: {
