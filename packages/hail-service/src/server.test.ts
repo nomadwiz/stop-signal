@@ -184,23 +184,21 @@ describe('hailServer, HailApi', () => {
     expect(applied).toEqual([{ kind: 'connection-lost', handle }]);
   });
 
-  it('submits connection-lost only when the last of a handle\'s open outcome streams closes', async () => {
+  // ADR-032 decision 1: closing a stream submits connection-lost, even while the handle holds another open.
+  it('sends a handle\'s outcomes to each stream it holds open, and submits connection-lost whenever one closes', async () => {
     const { base, applied, passengers } = await serve();
     const first = new AbortController();
-    const second = new AbortController();
-    await post(`${base}/outcomes`, JSON.stringify({ handle }), first.signal);
-    const reconnected = await post(`${base}/outcomes`, JSON.stringify({ handle }), second.signal);
+    const firstStream = await post(`${base}/outcomes`, JSON.stringify({ handle }), first.signal);
+    const second = await post(`${base}/outcomes`, JSON.stringify({ handle }));
+
+    passengers.outcome(handle, { stop, route, outcome: 'confirmed' });
+    for (const response of [firstStream, second]) {
+      const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
+      expect((await reader.read()).value).toContain('"outcome":"confirmed"');
+      reader.releaseLock();
+    }
 
     first.abort();
-    // Wait until the server has seen the first stream close, so a connection-lost from it would be here by now.
-    await until(async () => (await new Promise<number>((resolve) => server.getConnections((_error, n) => resolve(n)))) === 1);
-    await new Promise((resolve) => setImmediate(resolve));
-    passengers.outcome(handle, { stop, route, outcome: 'confirmed' });
-    const reader = reconnected.body!.pipeThrough(new TextDecoderStream()).getReader();
-    expect((await reader.read()).value).toContain('"outcome":"confirmed"');
-    expect(applied).toEqual([]);
-
-    second.abort();
     await until(() => applied.length > 0);
     expect(applied).toEqual([{ kind: 'connection-lost', handle }]);
   });
@@ -240,6 +238,7 @@ describe('hailServer, HailApi', () => {
   it.each([
     ['a handle that is not a UUID', { handle: 'passenger-1', stop, route, duration: 30 }],
     ['a UUID that is not version 4', { handle: '3f2b8c1e-9d4a-1e6b-8a2c-1b7d5e9f0a34', stop, route, duration: 30 }],
+    ['a UUID whose variant is not RFC 9562\'s', { handle: '3f2b8c1e-9d4a-4e6b-ca2c-1b7d5e9f0a34', stop, route, duration: 30 }],
     ['a fractional duration', { handle, stop, route, duration: 2.5 }],
     ['a negative duration', { handle, stop, route, duration: -1 }],
     ['a duration given as a string', { handle, stop, route, duration: '30' }],
@@ -252,6 +251,19 @@ describe('hailServer, HailApi', () => {
     expect(applied).toEqual([]);
   });
 
+  it.each([
+    ['/register', { stop, route, duration: 30 }],
+    ['/cancel', { stop, route }],
+    ['/presence/start', { stop }],
+    ['/presence/end', { stop }],
+    ['/outcomes', {}],
+  ])('refuses %s from a handle not shaped as a UUID v4, the credential (ADR-032 decision 5)', async (path, fields) => {
+    const { base, applied } = await serve();
+
+    expect((await post(`${base}${path}`, JSON.stringify({ handle: 'passenger-1', ...fields }))).status).toBe(400);
+    expect(applied).toEqual([]);
+  });
+
   it('accepts the upper-case handle iOS writes, and a duration of 0', async () => {
     const { base, applied } = await serve();
 
@@ -259,12 +271,6 @@ describe('hailServer, HailApi', () => {
 
     expect(response.status).toBe(204);
     expect(applied).toEqual([{ kind: 'register', handle: handle.toUpperCase(), stopId: stop, routeId: route, leadTimeS: 0 }]);
-  });
-
-  it('refuses an outcome stream for a handle that is not a UUID, and holds nothing open', async () => {
-    const { base } = await serve();
-
-    expect((await post(`${base}/outcomes`, JSON.stringify({ handle: 'x' }))).status).toBe(400);
   });
 });
 

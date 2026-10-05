@@ -4,9 +4,8 @@ import type { ServerResponse } from 'node:http';
 import type { HailEvent } from '../../hail-core/src/events.ts';
 import type { NotificationPort } from '../../hail-core/src/notification.ts';
 
+// ponytail: nothing caps the streams a handle, or the service, holds open; add a cap with #50 if one is needed.
 export function passengerChannel(submit: (event: HailEvent) => void): NotificationPort & { stream(handle: string, res: ServerResponse): void } {
-  // A device that reconnects can hold a second stream before the first one's close arrives, so a handle maps to
-  // every stream it has open, and the connection is lost only when the last one closes.
   const streams = new Map<string, Set<ServerResponse>>();
   return {
     outcome(handle, outcome) {
@@ -16,10 +15,10 @@ export function passengerChannel(submit: (event: HailEvent) => void): Notificati
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' }).flushHeaders();
       const open = streams.get(handle) ?? new Set<ServerResponse>();
       streams.set(handle, open.add(res));
+      // ADR-032 decision 1: closing a stream submits connection-lost, even while the handle holds another open.
       res.on('close', () => {
         open.delete(res);
-        if (open.size > 0) return;
-        streams.delete(handle);
+        if (open.size === 0) streams.delete(handle);
         // A throw here would escape an event listener and end the process. The event is lost with it, as a throw in
         // submit loses it on any route, and the error is reported where the host's journal keeps it.
         try {
