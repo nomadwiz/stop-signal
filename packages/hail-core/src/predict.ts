@@ -8,10 +8,17 @@ export interface Fix extends Point { at: number }
 const M_PER_DEGREE = 6_371_000 * (Math.PI / 180);
 // AT's feed "is updated at least every 30 seconds" (m1-revised.md §1.4); a report older than that is stale input (ADR-022).
 export const FEED_INTERVAL_MS = 30_000;
+// The furthest a vehicle is taken to travel along its shape per second between two reports: well above any urban bus
+// speed, and M1 is the same for any cap from 15 to 60 m/s (ADR-022 decision 5).
+const MAX_SPEED_MPS = 25;
 
 // distanceM and speedMps are measured along the shape; distanceM is negative once the vehicle is predicted past the stop.
-// stale is true when the latest report is more than one feed interval old at now.
-export function predict(shape: Point[], stop: Point, previous: Fix, latest: Fix, now: number): { distanceM: number; speedMps: number; stale: boolean } {
+// stale is true when the latest report is more than one feed interval old at now. alongM is where the latest report sits
+// along the shape; the caller passes it back as previousAlongM with the vehicle's next report on the same trip, and
+// leaves previousAlongM out for a trip's first pair, whose previous report is then matched over the whole shape.
+export function predict(
+  shape: Point[], stop: Point, previous: Fix, latest: Fix, now: number, previousAlongM?: number,
+): { distanceM: number; speedMps: number; stale: boolean; alongM: number } {
   if (shape.length < 2) throw new RangeError(`a shape of ${shape.length} points has no line to measure along`);
   if (!(latest.at > previous.at)) throw new RangeError(`latest report at ${latest.at} is not after the previous one at ${previous.at}`);
   // ponytail: flat-earth metres about the shape's first point, as actual-calls.ts does; good to well under a metre across a city.
@@ -19,10 +26,8 @@ export function predict(shape: Point[], stop: Point, previous: Fix, latest: Fix,
   const xy = ({ lat, lon }: Point) => [(lon - shape[0].lon) * kx, (lat - shape[0].lat) * M_PER_DEGREE];
   const points = shape.map(xy);
 
-  // Metres along the shape to the point on it nearest p.
-  // ponytail: nearest over the whole shape, so a shape that passes one place twice can match the wrong pass;
-  // search on from the previous report's match if a loop ever does.
-  const along = (p: Point) => {
+  // Metres along the shape to the point on it nearest p, among the segments that reach fromM and start by toM.
+  const along = (p: Point, fromM = 0, toM = Infinity) => {
     const [x, y] = xy(p);
     let best = { d: Infinity, m: 0 };
     let start = 0;
@@ -34,17 +39,21 @@ export function predict(shape: Point[], stop: Point, previous: Fix, latest: Fix,
       const length = Math.hypot(dx, dy);
       const f = length ? Math.min(1, Math.max(0, ((x - ax) * dx + (y - ay) * dy) / (length * length))) : 0;
       const d = Math.hypot(ax + f * dx - x, ay + f * dy - y);
-      if (d < best.d) best = { d, m: start + f * length };
+      if (start + length >= fromM && start <= toM && d < best.d) best = { d, m: start + f * length };
       start += length;
     }
     return best.m;
   };
 
-  const last = along(latest);
+  // Matched on from the previous report's match, no further than MAX_SPEED_MPS allows, so a shape that runs along one
+  // road twice keeps the vehicle on the pass it is on (ADR-022 decision 5).
+  const first = previousAlongM ?? along(previous);
+  const intervalS = (latest.at - previous.at) / 1000;
+  const last = along(latest, first, first + MAX_SPEED_MPS * intervalS);
   // Clamped at 0: a bus does not reverse along its trip, and a dwelling bus's fixes jitter backwards (ADR-022).
-  const speedMps = Math.max(0, (last - along(previous)) / ((latest.at - previous.at) / 1000));
+  const speedMps = Math.max(0, (last - first) / intervalS);
   // Clamped at 0: a vehicle's timestamp can run 1–2 s past the instant, and nothing is predicted backwards
   // (ADR-022, decided 05-10-2026).
   const ageS = Math.max(0, now - latest.at) / 1000;
-  return { distanceM: along(stop) - last - speedMps * ageS, speedMps, stale: ageS > FEED_INTERVAL_MS / 1000 };
+  return { distanceM: along(stop) - last - speedMps * ageS, speedMps, stale: ageS > FEED_INTERVAL_MS / 1000, alongM: last };
 }
