@@ -7,7 +7,7 @@ import type { Scenario } from './scenarios.ts';
 const T = 1_790_000_000_000;
 const DAY = '20261003';
 // A straight road east along one latitude. Stop S lies 1,335 m along it, and its previous stop P 356 m before S,
-// so a stopped vehicle is due within 356 + 50 = 406 m (decision 52).
+// so a stopped vehicle is due within 356 + 50 = 406 m (ADR-037's [DECIDED:05-10-2026] on a stopped vehicle).
 const LAT = -36.85;
 const KX = 6_371_000 * (Math.PI / 180) * Math.cos((LAT * Math.PI) / 180);
 const S = { lat: LAT, lon: 174.775 };
@@ -44,7 +44,7 @@ describe('commits', () => {
     expect(c?.at).toBeCloseTo(T + 22_444.4, 0);
   });
 
-  it('does not commit on a stale prediction, and commits on the next report instead (decision 35)', () => {
+  it("does not commit on a stale prediction, and commits on the next report instead (ADR-023's and ADR-037's [DECIDED:05-10-2026])", () => {
     // V1's latest fix is 40 s old at T, so its commit instant, T + 2.4 s, falls on a stale prediction.
     const old = [report('V1', 'A1', 1000, T - 60_000), report('V1', 'A1', 800, T - 40_000)];
     const snaps: Snapshot[] = [
@@ -58,19 +58,19 @@ describe('commits', () => {
     expect(commits(index, 'S', snaps)('R', T - 60_000, T + 30_000)).toEqual({ vehicleId: 'V1', at: T + 5_000 });
   });
 
-  it("commits at once on a stopped vehicle within its previous stop's distance plus CALL_RADIUS_M (decision 52)", () => {
+  it("commits at once on a stopped vehicle within its previous stop's distance plus CALL_RADIUS_M (ADR-037's [DECIDED:05-10-2026])", () => {
     const snaps: Snapshot[] = [-20_000, 0].map((dt) => ({ at: T + dt, reports: [report('V1', 'A1', 380, T + dt)] }));
 
     expect(commits(index, 'S', snaps)('R', T - 20_000, T + 60_000)).toEqual({ vehicleId: 'V1', at: T });
   });
 
-  it('waits on a stopped vehicle beyond that reach (decision 52)', () => {
+  it("waits on a stopped vehicle beyond that reach (ADR-037's [DECIDED:05-10-2026])", () => {
     const snaps: Snapshot[] = [-20_000, 0].map((dt) => ({ at: T + dt, reports: [report('V1', 'A1', 450, T + dt)] }));
 
     expect(commits(index, 'S', snaps)('R', T - 20_000, T + 60_000)).toBeNull();
   });
 
-  it('gives a trip whose first stop is the stop no stopped-vehicle rule (decision 52)', () => {
+  it("gives a trip whose first stop is the stop no stopped-vehicle rule (ADR-037's [DECIDED:05-10-2026])", () => {
     const snaps: Snapshot[] = [-20_000, 0].map((dt) => ({ at: T + dt, reports: [report('V1', 'F1', 10, T + dt)] }));
 
     expect(commits(index, 'S', snaps)('F', T - 20_000, T + 60_000)).toBeNull();
@@ -107,5 +107,17 @@ describe('m1', () => {
       'queued-on-both': { calls: 1, right: 1, wrong: 0, none: 0 },
       disputed: { calls: 1, right: 0, wrong: 0, none: 1 },
     });
+  });
+
+  it('counts a call once however many passengers want it, since they resolve alike', () => {
+    const snaps: Snapshot[] = [-20_000, 0, 20_000].map((dt) => ({ at: T + dt, reports: [report('V1', 'A1', 600 - dt / 100, T + dt)] }));
+    const register = (handle: string) => ({ at: T - 20_000, event: { kind: 'register' as const, handle, stopId: 'S', routeId: 'R', leadTimeS: 0 } });
+    const five: Scenario = {
+      stopId: 'S', day: DAY, dS: 17.4, n: 5, class: 'single', group: 'single-on-both',
+      calls: [{ tripId: 'A1', vehicleId: 'V1', routeId: 'R', stopSequence: 3, at: T + 60_000, atArrival: null, atArrivalClass: 'single' }],
+      events: ['h1', 'h2', 'h3', 'h4', 'h5'].map(register),
+    };
+
+    expect(m1(index, 'S', snaps, [five])['single-on-both']).toEqual({ calls: 1, right: 1, wrong: 0, none: 0 });
   });
 });
