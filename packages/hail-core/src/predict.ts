@@ -7,7 +7,7 @@ export interface Fix extends Point { at: number }
 
 const M_PER_DEGREE = 6_371_000 * (Math.PI / 180);
 // AT's feed "is updated at least every 30 seconds" (m1-revised.md §1.4); a report older than that is stale input (ADR-022).
-const FEED_INTERVAL_MS = 30_000;
+export const FEED_INTERVAL_MS = 30_000;
 
 // distanceM and speedMps are measured along the shape; distanceM is negative once the vehicle is predicted past the stop.
 // stale is true when the latest report is more than one feed interval old at now.
