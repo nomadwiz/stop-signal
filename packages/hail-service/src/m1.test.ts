@@ -95,6 +95,24 @@ describe('commits', () => {
 
     expect(commits(index, 'S', snaps)('R', T - 20_000, T + 5_000)).toBeNull();
   });
+
+  it("carries each fix's match along the shape to the next, so a loop's second pass stays the second pass (ADR-022 decision 5)", () => {
+    // A road driven twice, 20 m apart: 1,000 m east, 20 m north, 1,000 m back west, then on west to S, 2,320 m along.
+    const at = (north: number, east: number) => ({ lat: LAT + north / (6_371_000 * (Math.PI / 180)), lon: 174.76 + east / KX });
+    const loopIndex = {
+      ...index,
+      stops: new Map([['S', at(20, -300)], ['P', at(20, 300)]]),
+      trips: new Map([['A1', { id: 'A1', routeId: 'R', shapeId: 'loop', stopTimes: [{ stopId: 'P', sequence: 1 }, { stopId: 'S', sequence: 2 }] }]]),
+      tripsAtStop: new Map([['S', ['A1']]]),
+      shapes: new Map([['loop', [at(0, 0), at(0, 1_000), at(20, 1_000), at(20, 0), at(20, -500)]]]),
+    } as unknown as StaticIndex;
+    // V1 runs west on the second pass at 10 m/s; its middle fix strays 15 m south, nearer the first pass.
+    const fix = (north: number, east: number, t: number): VehicleReport => ({ vehicleId: 'V1', tripId: 'A1', startDate: DAY, ...at(north, east), at: t });
+    const snaps: Snapshot[] = [fix(20, 400, T - 40_000), fix(5, 200, T - 20_000), fix(20, 0, T)].map((r) => ({ at: r.at, reports: [r] }));
+
+    // At T V1 is 300 m out at 10 m/s, inside a deadline − 30 s that has passed, so it commits at once.
+    expect(commits(loopIndex, 'S', snaps)('R', T, T + 60_000)).toEqual({ vehicleId: 'V1', at: T });
+  });
 });
 
 describe('m1', () => {
