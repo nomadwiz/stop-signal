@@ -23,9 +23,9 @@ export interface Snapshot { at: number; reports: VehicleReport[] }
 // For a stop and the snapshots in time order: the vehicle a hail on a route, armed from `from` to `to`, commits on,
 // and when; null when it commits on none. The commit is ADR-037's: on the nearest calling vehicle of the route
 // (ADR-036), one feed interval before its deadline at DECEL_MPS2, or at once if that instant has passed; never on a
-// stale prediction (ADR-023's and ADR-037's [DECIDED:05-10-2026]); and on a stopped vehicle at once when it is no
-// further than its previous stop plus CALL_RADIUS_M, otherwise not until it moves (ADR-037's [DECIDED:05-10-2026] on a
-// stopped vehicle). A passed deadline commits nothing (ADR-023).
+// stale prediction (ADR-023's and ADR-037's [DECIDED:05-10-2026]); and on a stopped vehicle whose prediction is not
+// stale at once when it is no further than its previous stop plus CALL_RADIUS_M, otherwise not until it moves or
+// reports again (ADR-037's [DECIDED:05-10-2026] on a stopped vehicle). A passed deadline commits nothing (ADR-023).
 export function commits(index: StaticIndex, stopId: string, snaps: Snapshot[]) {
   const stop = index.stops.get(stopId)!;
   const tripOf = (r: VehicleReport) => (r.startDate === index.previousDay ? index.lateTrips : index.trips).get(r.tripId!);
@@ -72,7 +72,7 @@ export function commits(index: StaticIndex, stopId: string, snaps: Snapshot[]) {
       if (!p) continue;
       let at: number | undefined;
       if (p.speedMps === 0) {
-        if (p.distanceM <= reach(p.report)) at = now;
+        if (!p.stale && p.distanceM <= reach(p.report)) at = now;
       } else {
         const d = signalDeadline(now, p.distanceM, p.speedMps, DECEL_MPS2);
         if (d && d.deadline - FEED_INTERVAL_MS < (armed[k + 1]?.at ?? to)) at = Math.max(now, d.deadline - FEED_INTERVAL_MS);

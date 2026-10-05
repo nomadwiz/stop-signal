@@ -70,6 +70,19 @@ describe('commits', () => {
     expect(commits(index, 'S', snaps)('R', T - 20_000, T + 60_000)).toBeNull();
   });
 
+  it("waits on a stale stopped vehicle within that reach, and commits on its next fresh report (ADR-037's [DECIDED:05-10-2026])", () => {
+    // V1 stands 380 m out; at T its latest fix is 40 s old.
+    const snaps: Snapshot[] = [
+      { at: T - 60_000, reports: [report('V1', 'A1', 380, T - 60_000)] },
+      { at: T - 40_000, reports: [report('V1', 'A1', 380, T - 40_000)] },
+      { at: T, reports: [report('V1', 'A1', 380, T - 40_000)] },
+      { at: T + 10_000, reports: [report('V1', 'A1', 380, T + 10_000)] },
+    ];
+
+    expect(commits(index, 'S', snaps)('R', T, T + 5_000)).toBeNull();
+    expect(commits(index, 'S', snaps)('R', T, T + 30_000)).toEqual({ vehicleId: 'V1', at: T + 10_000 });
+  });
+
   it("gives a trip whose first stop is the stop no stopped-vehicle rule (ADR-037's [DECIDED:05-10-2026])", () => {
     const snaps: Snapshot[] = [-20_000, 0].map((dt) => ({ at: T + dt, reports: [report('V1', 'F1', 10, T + dt)] }));
 
