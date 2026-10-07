@@ -58,10 +58,11 @@ function service(timetable: ServiceDay = road) {
     decelMps2: 0.9,
     dwellMs: 30_000,
   });
-  // Sets the clock to t and fires every wakeup due by then, then submits each event in order, as the live adapters do.
+  // Sets the clock to t and submits each event in order, as the live adapters do; with no event, fires every wakeup due
+  // by then, as the live timer does. submit() fires them first itself (ADR-028 decision 1).
   const at = (t: number, ...events: HailEvent[]) => {
     now = t;
-    wakeups.wake();
+    if (!events.length) wakeups.wake();
     for (const e of events) wakeups.submit(e);
   };
   return {
@@ -110,5 +111,73 @@ describe('hailCoordinator: register and cancel', () => {
 
     expect(() => s.at(T, unknown)).not.toThrow();
     expect(s.records[0].payload).toEqual({ stopId: 'nowhere', routeId: 'none', leadTimeS: 60 });
+  });
+});
+
+// [kind, seconds after T] for each record, so a test reads as the timeline it asserts.
+const timeline = (records: DecisionRecord[]) => records.map((r) => [r.kind, (r.at - T) / 1000]);
+
+describe('hailCoordinator: presence and dwell', () => {
+  it('never makes a hail eligible on a presence shorter than the dwell', () => {
+    const s = service();
+
+    s.at(T, register, start);
+    s.at(T + 29_999, end);
+    s.at(T + 60_000);
+
+    expect(timeline(s.records)).toEqual([['registered', 0], ['present', 0], ['left', 29.999]]);
+  });
+
+  it('makes a hail eligible on a presence of exactly the dwell, before a presence-end at that instant (ADR-028 decision 1)', () => {
+    const s = service();
+
+    s.at(T, register, start);
+    s.at(T + 30_000, end);
+
+    expect(timeline(s.records)).toEqual([['registered', 0], ['present', 0], ['eligible', 30], ['left', 30]]);
+  });
+
+  it('returns a hail to Registered on a presence-end with nothing delivered, and starts a fresh dwell on return (ADR-040)', () => {
+    const s = service();
+
+    s.at(T, register, start);
+    s.at(T + 30_000);
+    s.at(T + 35_000, end);
+    s.at(T + 40_000, start);
+    s.at(T + 69_999);
+    s.at(T + 70_000);
+
+    expect(timeline(s.records)).toEqual([['registered', 0], ['present', 0], ['eligible', 30], ['left', 35], ['returned', 40], ['eligible', 70]]);
+  });
+
+  it('keeps the first presence-start\'s dwell when another arrives while present', () => {
+    const s = service();
+
+    s.at(T, register, start);
+    s.at(T + 20_000, start);
+    s.at(T + 30_000);
+
+    expect(timeline(s.records)).toEqual([['registered', 0], ['present', 0], ['eligible', 30]]);
+  });
+
+  it('makes a hail registered while its passenger is present Present at once, eligible at presentSince + dwell (ADR-040, decided 07-10-2026)', () => {
+    const s = service();
+
+    s.at(T, start);
+    s.at(T + 10_000, register);
+    s.at(T + 29_999);
+    s.at(T + 30_000);
+
+    expect(timeline(s.records)).toEqual([['registered', 10], ['present', 10], ['eligible', 30]]);
+  });
+
+  it('makes a hail registered after its passenger has been present past the dwell eligible at once, connection loss aside (ADR-040, decided 07-10-2026)', () => {
+    const s = service();
+
+    s.at(T, start);
+    s.at(T + 5_000, lost);
+    s.at(T + 40_000, register);
+
+    expect(timeline(s.records)).toEqual([['registered', 40], ['present', 40], ['eligible', 40]]);
   });
 });
