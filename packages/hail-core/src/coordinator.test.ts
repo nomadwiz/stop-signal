@@ -545,7 +545,7 @@ describe('hailCoordinator: a lost connection and a spent registration (ADR-010, 
     ]);
   });
 
-  it('never spends a delivered hail from Unattended (ADR-010 decision 4)', () => {
+  it('spends a delivered hail on an explicit presence-end even when Unattended: decision 4 covers silence only (ADR-010, annotated 08-10-2026)', () => {
     const s = service();
     s.at(T - 40_000, register, start);
     for (const t of [T - 20_000, T]) s.tick(t, v1(t, 380));
@@ -553,7 +553,9 @@ describe('hailCoordinator: a lost connection and a spent registration (ADR-010, 
     s.at(T + 10_000, end);
     s.at(T + 20_000, register);
 
-    expect(s.kinds()).toEqual(['registered', 'present', 'eligible', 'committed', 'unattended']);
+    expect(s.records.map((r) => [r.kind, r.hailId])).toEqual([
+      ['registered', 'h1'], ['present', 'h1'], ['eligible', 'h1'], ['committed', 'h1'], ['unattended', 'h1'], ['spent', 'h1'], ['registered', 'h2'],
+    ]);
   });
 
   it('withdraws a delivered hail on cancel', () => {

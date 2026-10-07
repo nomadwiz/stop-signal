@@ -50,8 +50,8 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
 }): (event: HailEvent) => void {
   // Insertion order, so every event reaches the hails it names in the order they registered. Ids count up from h1,
   // so a replay numbers them alike.
-  // ponytail: a committed hail left Unattended is never spent (ADR-010 decision 4), so it stays here until #61's
-  // outcomes end it; a hail for an unknown stop or route stays until cancelled. Reject unknown stops at register if
+  // ponytail: a committed hail whose passenger never reports leaving stays here until #61's outcomes end it; a hail
+  // for an unknown stop or route stays until cancelled. Reject unknown stops at register if
   // that growth matters.
   const hails = new Map<string, Hail>();
   let hailCount = 0;
@@ -206,14 +206,15 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
         presence.delete(here(event));
         for (const h of atStop(event)) {
           // Back to Registered, uncommitted, until a return (ADR-040 decision 3). The departure is reported, so it also
-          // ends Unattended. A delivered hail is spent, but never from Unattended (ADR-010 decisions 1 and 4, FR13).
+          // ends Unattended. A delivered hail is spent (ADR-010 decision 1, FR13), Unattended or not: decision 4 keeps
+          // silence from spending it, and this is no silence (ADR-010, annotated 08-10-2026).
           if (h.state === 'present' || h.state === 'eligible') {
             h.state = 'registered';
             h.left = true;
             h.unattended = false;
             h.wake = undefined;
             note(h, 'left');
-          } else if (h.state === 'committed' && !h.unattended) end(h, 'spent');
+          } else if (h.state === 'committed') end(h, 'spent');
         }
         return;
       }
