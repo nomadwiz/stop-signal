@@ -28,6 +28,8 @@ interface Hail {
   routeId: string;
   state: 'registered' | 'present' | 'eligible' | 'committed';
   left: boolean;
+  // The vehicle runs this hail passed over for being too close to stop, never resolved to again (ADR-039 decision 2).
+  skipped: Set<string>;
   wake?: { at: number; purpose: Purpose };
 }
 type Purpose = Extract<HailEvent, { kind: 'wakeup' }>['purpose'];
@@ -75,12 +77,14 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
   const arrive = (h: Hail, kind: 'present' | 'returned', since: number, now: number) => {
     h.state = 'present';
     note(h, kind);
+    if (kind === 'returned') skip(h, now);
     if (now >= since + dwellMs) eligible(h, now);
     else wake(h, 'dwell', since + dwellMs);
   };
   const eligible = (h: Hail, now: number) => {
     h.state = 'eligible';
     note(h, 'eligible');
+    skip(h, now);
     consider(h, now);
   };
 
@@ -100,6 +104,18 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
     return callingAt(timetable, h.stopId, candidates).map(({ report }) => ({ report, ...predicted.get(report)! }));
   };
 
+  // The hail passes over each calling vehicle that is moving, fresh, and already inside its stopping distance, at
+  // registration (ADR-039 decision 1), on a return (ADR-040, decided 07-10-2026) and on eligibility (ADR-039, annotated
+  // 07-10-2026). At speed above 0, signalDeadline's null is exactly that test (ADR-023 decisions 3 and 4). A stopped
+  // vehicle is the stopped-vehicle rule's (decision 4), and a stale one cannot be shown past its deadline (decision 5).
+  // One record lists the runs newly skipped, and none is written when there are none.
+  const skip = (h: Hail, now: number) => {
+    const passed = calling(h, now).filter((c) =>
+      c.speedMps > 0 && !c.stale && !signalDeadline(now, c.distanceM, c.speedMps, decelMps2) && !h.skipped.has(run(c.report)));
+    for (const c of passed) h.skipped.add(run(c.report));
+    if (passed.length) note(h, 'skipped', { candidates: passed.map((c) => c.report.vehicleId) });
+  };
+
   // Metres along the report's trip shape from the trip's stop before stopId to stopId, plus CALL_RADIUS_M; -1 when stopId
   // is the trip's first stop, so no stopped vehicle on it is due (ADR-037's [DECIDED:05-10-2026]). m1.ts's reach.
   // ponytail: places that stop by predict at speed 0, nearest over the whole shape, as predict places stopId itself.
@@ -114,7 +130,7 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
   // instant has passed (ADR-037 decision 1, annotated 07-10-2026); until then it waits on a commit wakeup, which any
   // later report that moves the deadline replaces. Run on eligibility, on every tick, and on its own wakeups.
   const consider = (h: Hail, now: number, purpose?: Purpose) => {
-    const [p] = calling(h, now);
+    const p = calling(h, now).find((c) => !h.skipped.has(run(c.report)));
     if (!p) return;
     const d = signalDeadline(now, p.distanceM, p.speedMps, decelMps2);
     const vehicleId = p.report.vehicleId;
@@ -159,9 +175,10 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
       case 'register': {
         if (registration(event)) return;
         const { handle, stopId, routeId, leadTimeS } = event;
-        const h: Hail = { id: `h${++hailCount}`, handle, stopId, routeId, state: 'registered', left: false };
+        const h: Hail = { id: `h${++hailCount}`, handle, stopId, routeId, state: 'registered', left: false, skipped: new Set() };
         hails.set(h.id, h);
         note(h, 'registered', { stopId, routeId, leadTimeS });
+        skip(h, now);
         const since = presence.get(here(h));
         if (since !== undefined) arrive(h, 'present', since, now);
         return;

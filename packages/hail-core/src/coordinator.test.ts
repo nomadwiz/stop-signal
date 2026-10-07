@@ -260,7 +260,7 @@ describe('hailCoordinator: the commit', () => {
 });
 
 describe('hailCoordinator: the deadline and a stale prediction', () => {
-  it('abandons a hail that becomes eligible once its vehicle is inside its stopping distance (ADR-023 decision 4)', () => {
+  it('skips, rather than abandons on, a bus already inside its stopping distance when the hail becomes eligible (ADR-039, annotated 07-10-2026)', () => {
     const s = service();
     for (const t of [T - 20_000, T, T + 20_000, T + 40_000, T + 60_000]) s.tick(t, v1(t));
 
@@ -269,8 +269,7 @@ describe('hailCoordinator: the deadline and a stale prediction', () => {
     s.at(T + 75_000);
     s.at(T + 80_000, cancel);
 
-    expect(timeline(s.records)).toEqual([['registered', 45], ['present', 45], ['eligible', 75], ['abandoned', 75]]);
-    expect(s.records.at(-1)).toMatchObject({ vehicleId: 'V1', payload: { reason: 'deadline' } });
+    expect(timeline(s.records)).toEqual([['registered', 45], ['present', 45], ['eligible', 75], ['skipped', 75], ['withdrawn', 80]]);
     expect(s.signals).toEqual([]);
   });
 
@@ -366,5 +365,88 @@ describe("hailCoordinator: a stopped vehicle (ADR-037's [DECIDED:05-10-2026])", 
 
     s.tick(T + 10_000, v1(T + 10_000, 380));
     expect(timeline(s.records).at(-1)).toEqual(['committed', 10]);
+  });
+});
+
+// Route R's V2, 800 m before S at T, at 10 m/s: its commit instant is T + 42.4 s, as V1's is in the commit tests.
+const next = (t: number) => report('V2', 'A2', 800 - (t - T) / 100, t);
+
+describe('hailCoordinator: a candidate past its deadline goes to the next bus (ADR-039)', () => {
+  it('skips at registration a moving candidate inside its stopping distance, and keeps it skipped after it stops (decisions 1 and 2)', () => {
+    const s = service();
+    // V1 is 60 m out at 10 m/s at T, inside its 75.6 m stopping distance.
+    for (const t of [T - 20_000, T]) s.tick(t, v1(t, 60 - (t - T) / 100), next(t));
+    s.at(T, register, start);
+    // V1 then stands 40 m out, within the stopped-vehicle reach.
+    s.tick(T + 20_000, v1(T + 20_000, 40), next(T + 20_000));
+    s.at(T + 30_000);
+    s.tick(T + 40_000, v1(T + 40_000, 40), next(T + 40_000));
+    s.at(T + 42_445);
+
+    expect(timeline(s.records)).toEqual([['registered', 0], ['skipped', 0], ['present', 0], ['eligible', 30], ['committed', 42.445]]);
+    expect(s.records[1].payload).toEqual({ candidates: ['V1'] });
+    expect(s.signals).toEqual([{ id: 's1', vehicleId: 'V2', stopId: 'S' }]);
+  });
+
+  it('skips neither a stopped candidate nor a stale one (decisions 4 and 5)', () => {
+    const s = service();
+    // V2's latest report is 40 s old at T, extrapolated to 50 m out at 10 m/s; V1 stands 50 m out.
+    s.tick(T - 60_000, report('V2', 'A2', 650, T - 60_000));
+    s.tick(T - 40_000, report('V2', 'A2', 450, T - 40_000));
+    for (const t of [T - 20_000, T]) s.tick(t, v1(t, 50));
+
+    s.at(T, register);
+
+    expect(s.kinds()).toEqual(['registered']);
+  });
+
+  it('skips again on a return after a reported departure, adding to the hail\'s skipped set (ADR-040, decided 07-10-2026)', () => {
+    const s = service();
+    s.at(T - 40_000, register, start);
+    s.at(T - 30_000, end);
+    for (const t of [T - 20_000, T]) s.tick(t, v1(t, 60 - (t - T) / 100), next(t));
+    s.at(T, start);
+    s.tick(T + 20_000, v1(T + 20_000, 40), next(T + 20_000));
+    s.at(T + 30_000);
+    s.tick(T + 40_000, v1(T + 40_000, 40), next(T + 40_000));
+    s.at(T + 42_445);
+
+    expect(timeline(s.records)).toEqual([
+      ['registered', -40], ['present', -40], ['left', -30], ['returned', 0], ['skipped', 0], ['eligible', 30], ['committed', 42.445],
+    ]);
+    expect(s.records[4].payload).toEqual({ candidates: ['V1'] });
+    expect(s.signals[0].vehicleId).toBe('V2');
+  });
+
+  it('skips on eligibility a candidate outside its stopping distance at registration and inside it by then (ADR-039, annotated 07-10-2026)', () => {
+    const s = service();
+    // V1 is 350 m out at 10 m/s at T, and 50 m out at T + 30 s.
+    for (const t of [T - 20_000, T]) s.tick(t, v1(t, 350 - (t - T) / 100), next(t));
+    s.at(T, register, start);
+    s.tick(T + 20_000, v1(T + 20_000, 150), next(T + 20_000));
+    s.at(T + 30_000);
+    s.tick(T + 40_000, next(T + 40_000));
+    s.at(T + 42_445);
+
+    expect(timeline(s.records)).toEqual([['registered', 0], ['present', 0], ['eligible', 30], ['skipped', 30], ['committed', 42.445]]);
+    expect(s.signals[0].vehicleId).toBe('V2');
+  });
+
+  it('makes "Hail the next 70" eligible at once for a passenger present past the dwell, resolving past the bus too close to stop (ADR-040, decided 07-10-2026)', () => {
+    const s = service();
+    s.at(T - 60_000, register, start);
+    s.at(T - 30_000);
+    s.tick(T - 20_000, v1(T - 20_000, 260), next(T - 20_000));
+    // V1 is 60 m out at 10 m/s, inside its stopping distance: h1 ends in cannot hail, and the passenger arms again.
+    s.tick(T, v1(T, 60), next(T));
+    s.at(T, register);
+    for (const t of [T + 20_000, T + 40_000]) s.tick(t, next(t));
+    s.at(T + 42_445);
+
+    expect(s.records.map((r) => [r.kind, (r.at - T) / 1000, r.hailId])).toEqual([
+      ['registered', -60, 'h1'], ['present', -60, 'h1'], ['eligible', -30, 'h1'], ['abandoned', 0, 'h1'],
+      ['registered', 0, 'h2'], ['skipped', 0, 'h2'], ['present', 0, 'h2'], ['eligible', 0, 'h2'], ['committed', 42.445, 'h2'],
+    ]);
+    expect(s.signals).toEqual([{ id: 's1', vehicleId: 'V2', stopId: 'S' }]);
   });
 });
