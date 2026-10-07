@@ -63,9 +63,11 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
   // ponytail: a presence-start for a handle with no hail is held until its presence-end, for the same reason.
   const presence = new Map<string, number>();
   const here = ({ handle, stopId }: { handle: string; stopId: string }) => JSON.stringify([handle, stopId]);
-  // Each vehicle run's latest two fixes, with each one's match along the trip's shape.
-  // ponytail: one entry per vehicle run per service day, never dropped; drop a run once its trip ends if memory matters.
-  const runs = new Map<string, { previous?: VehicleReport; previousAlongM?: number; latest: VehicleReport; latestAlongM: number }>();
+  // Each vehicle's current run, keyed by vehicleId: its latest two fixes on it, with each one's match along the trip's
+  // shape. A report on another run replaces the vehicle's last, so a finished trip is no longer a candidate (ADR-022,
+  // annotated 08-10-2026).
+  // ponytail: one entry per vehicle, kept after it stops reporting; drop a vehicle unheard for some minutes if that matters.
+  const runs = new Map<string, { key: string; previous?: VehicleReport; previousAlongM?: number; latest: VehicleReport; latestAlongM: number }>();
   let signalCount = 0;
   const tripOf = (r: VehicleReport) => (r.startDate === timetable.previousDay ? timetable.lateTrips : timetable.trips).get(r.tripId ?? '');
 
@@ -255,13 +257,15 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
       case 'tick': {
         for (const r of event.reports) {
           const shape = timetable.shapes.get(tripOf(r)?.shapeId ?? '');
-          const known = runs.get(run(r));
-          // An unknown trip, a shape with no line to measure along, and a fix no newer than the run's latest are ignored.
+          const known = runs.get(r.vehicleId);
+          // An unknown trip, a shape with no line to measure along, and a fix no newer than the vehicle's latest are ignored.
           if (!shape || shape.length < 2 || !(r.at > (known?.latest.at ?? -Infinity))) continue;
-          // Each fix is matched on from the one before it; a run's first, over the whole shape (ADR-022 decision 5).
-          runs.set(run(r), known
-            ? { previous: known.latest, previousAlongM: known.latestAlongM, latest: r, latestAlongM: predict(shape, shape[0], known.latest, r, r.at, known.latestAlongM).alongM }
-            : { latest: r, latestAlongM: predict(shape, shape[0], { ...r, at: r.at - 1 }, r, r.at).alongM });
+          // Each fix is matched on from the one before it on the same run; a run's first, over the whole shape (ADR-022
+          // decision 5).
+          const key = run(r);
+          runs.set(r.vehicleId, known?.key === key
+            ? { key, previous: known.latest, previousAlongM: known.latestAlongM, latest: r, latestAlongM: predict(shape, shape[0], known.latest, r, r.at, known.latestAlongM).alongM }
+            : { key, latest: r, latestAlongM: predict(shape, shape[0], { ...r, at: r.at - 1 }, r, r.at).alongM });
         }
         for (const h of hails.values()) if (h.state === 'eligible') consider(h, now);
         return;

@@ -270,6 +270,23 @@ describe('hailCoordinator: the commit', () => {
   });
 });
 
+describe('hailCoordinator: one run per vehicle (ADR-022, annotated 08-10-2026)', () => {
+  it("drops a vehicle's finished trip when it reports on another, so the hail commits on the next bus at that bus's own commit instant", () => {
+    const s = service();
+    s.at(T - 60_000, register, start);
+    // V1 runs A1, 10 m nearer S than V2 at 10 m/s, then reports on B1, route Q. Kept, A1's run would stay route R's
+    // nearest calling vehicle, extrapolated from a report gone stale, and the hail would wait on it.
+    for (const t of [T - 40_000, T - 20_000]) s.tick(t, v1(t, 990 - (t - T + 20_000) / 100), v2(t, 800));
+    s.tick(T, report('V1', 'B1', 500, T), v2(T, 800));
+    for (const t of [T + 20_000, T + 40_000]) s.tick(t, report('V1', 'B1', 500 - (t - T) / 100, t), v2(t, 800));
+    s.at(T + 42_445);
+
+    expect(timeline(s.records).at(-1)).toEqual(['committed', 42.445]);
+    expect(s.records.at(-1)).toMatchObject({ vehicleId: 'V2' });
+    expect(s.records.at(-1)!.payload.deadline).toBeCloseTo(T + 72_444.4, 0);
+  });
+});
+
 describe('hailCoordinator: input it cannot use', () => {
   it('never resolves a hail for an unknown stop, and never throws on it', () => {
     const s = service();
@@ -283,7 +300,7 @@ describe('hailCoordinator: input it cannot use', () => {
     expect(s.kinds()).toEqual(['registered', 'present', 'eligible']);
   });
 
-  it('ignores a report with no trip, an unknown trip, a one-point shape, or a fix no newer than its run\'s latest, and commits on the next valid one', () => {
+  it('ignores a report with no trip, an unknown trip, a one-point shape, or a fix no newer than its vehicle\'s latest, and commits on the next valid one', () => {
     const s = service({
       ...road,
       trips: new Map([...road.trips, ['A9', { routeId: 'R', shapeId: 'dot', stopTimes }]]),
