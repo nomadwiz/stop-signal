@@ -48,12 +48,16 @@ function service(timetable: ServiceDay = road) {
   const records: DecisionRecord[] = [];
   const signals: Signal[] = [];
   const retracted: string[] = [];
+  const scheduled: { at: number; event: HailEvent }[] = [];
   const wakeups = scheduler<HailEvent>(clock, eventLoop<HailEvent>((e) => apply(e)));
   const apply = hailCoordinator({
     clock,
     record: recorder(clock, { append: (r) => records.push(r) }),
     signals: { signal: (s) => signals.push(s), retract: (id) => retracted.push(id) },
-    schedule: wakeups.at,
+    schedule: (at, event) => {
+      scheduled.push({ at, event });
+      wakeups.at(at, event);
+    },
     timetable,
     decelMps2: 0.9,
     dwellMs: 30_000,
@@ -69,6 +73,7 @@ function service(timetable: ServiceDay = road) {
     records,
     signals,
     retracted,
+    scheduled,
     kinds: () => records.map((r) => r.kind),
     at,
     tick: (t: number, ...reports: VehicleReport[]) => at(t, { kind: 'tick', reports }),
@@ -150,14 +155,15 @@ describe('hailCoordinator: presence and dwell', () => {
     expect(timeline(s.records)).toEqual([['registered', 0], ['present', 0], ['eligible', 30], ['left', 35], ['returned', 40], ['eligible', 70]]);
   });
 
-  it('keeps the first presence-start\'s dwell when another arrives while present', () => {
+  it('keeps the first presence-start\'s arrival when another arrives while present, for a hail registered after both', () => {
     const s = service();
 
-    s.at(T, register, start);
+    s.at(T, start);
     s.at(T + 20_000, start);
+    s.at(T + 25_000, register);
     s.at(T + 30_000);
 
-    expect(timeline(s.records)).toEqual([['registered', 0], ['present', 0], ['eligible', 30]]);
+    expect(timeline(s.records)).toEqual([['registered', 25], ['present', 25], ['eligible', 30]]);
   });
 
   it('makes a hail registered while its passenger is present Present at once, eligible at presentSince + dwell (ADR-040, decided 07-10-2026)', () => {
@@ -246,16 +252,53 @@ describe('hailCoordinator: the commit', () => {
     };
     const fix = (north: number, east: number, t: number): VehicleReport => ({ vehicleId: 'V1', tripId: 'A1', startDate: DAY, ...at(north, east), at: t });
     const s = service(loop);
-    s.at(T - 70_000, register, start);
+    s.at(T - 90_000, register, start);
 
-    // V1 runs west on the second pass at 10 m/s; its latest fix strays 15 m south, nearer the first pass. Matched on
-    // from 1,620 m it sits 1,820 m along, 500 m from S, so the deadline is 42.4 s on and the commit 12.4 s on.
-    s.tick(T - 40_000, fix(20, 400, T - 40_000));
+    // V1 runs west on the second pass at 10 m/s, from 1,420 m along; its next two fixes stray 15 m south, nearer the
+    // first pass. Each matched on from the one before, they sit 1,620 m and 1,820 m along, the last 500 m from S, so the
+    // deadline is 42.4 s on and the commit 12.4 s on. Matched over the whole shape, the middle fix would fall on the
+    // first pass, 400 m along, and drag the last one back with it.
+    s.tick(T - 60_000, fix(20, 600, T - 60_000));
+    s.tick(T - 40_000, fix(5, 400, T - 40_000));
     s.tick(T - 20_000, fix(5, 200, T - 20_000));
     s.at(T - 7_555);
 
     expect(s.records.at(-1)).toMatchObject({ kind: 'committed', vehicleId: 'V1' });
     expect(s.records.at(-1)!.payload.deadline).toBeCloseTo(T + 22_444.4, 0);
+  });
+});
+
+describe('hailCoordinator: input it cannot use', () => {
+  it('never resolves a hail for an unknown stop, and never throws on it', () => {
+    const s = service();
+    for (const t of [T - 20_000, T]) s.tick(t, v1(t));
+
+    expect(() => {
+      s.at(T, { ...register, stopId: 'nowhere' }, { ...start, stopId: 'nowhere' });
+      s.at(T + 30_000);
+      s.tick(T + 35_000, v1(T + 35_000));
+    }).not.toThrow();
+    expect(s.kinds()).toEqual(['registered', 'present', 'eligible']);
+  });
+
+  it('ignores a report with no trip, an unknown trip, a one-point shape, or a fix no newer than its run\'s latest, and commits on the next valid one', () => {
+    const s = service({
+      ...road,
+      trips: new Map([...road.trips, ['A9', { routeId: 'R', shapeId: 'dot', stopTimes }]]),
+      tripsAtStop: new Map([['S', ['A1', 'A9']]]),
+      shapes: new Map([...road.shapes, ['dot', [S]]]),
+    });
+    s.at(T - 40_000, register, start);
+    s.tick(T - 20_000, v1(T - 20_000));
+
+    const { tripId: _, ...untripped } = report('V7', 'A1', 500, T);
+    expect(() => s.tick(T, untripped, report('V8', 'X9', 500, T), report('V9', 'A9', 500, T), v1(T - 20_000, 700), v1(T - 30_000, 500), v1(T), v1(T, 600))).not.toThrow();
+    expect(s.kinds()).toEqual(['registered', 'present', 'eligible']);
+
+    for (const t of [T + 20_000, T + 40_000]) s.tick(t, v1(t));
+    s.at(T + 42_445);
+    expect(timeline(s.records).at(-1)).toEqual(['committed', 42.445]);
+    expect(s.records.at(-1)!.payload.deadline).toBeCloseTo(T + 72_444.4, 0);
   });
 });
 
@@ -305,11 +348,14 @@ describe('hailCoordinator: the deadline and a stale prediction', () => {
     for (const t of [T - 20_000, T]) s.tick(t, v1(t));
 
     s.at(T + 42_445);
-    s.at(T + 72_444);
+    // The deadline wakeup, at the deadline extrapolated from the stale report, T + 72.4 s.
+    const { at: deadline } = s.scheduled.findLast(({ event }) => event.kind === 'wakeup' && event.purpose === 'deadline')!;
+    expect(deadline).toBeCloseTo(T + 72_444.4, 0);
+    s.at(deadline - 1);
     expect(s.kinds()).toEqual(['registered', 'present', 'eligible']);
 
-    s.at(T + 72_445);
-    expect(timeline(s.records).at(-1)).toEqual(['abandoned', 72.445]);
+    s.at(deadline);
+    expect(s.records.at(-1)).toMatchObject({ at: deadline, kind: 'abandoned' });
     expect(s.records.at(-1)).toMatchObject({ vehicleId: 'V1', payload: { reason: 'stale' } });
     expect(s.signals).toEqual([]);
   });
