@@ -287,6 +287,27 @@ describe('hailCoordinator: one run per vehicle (ADR-022, annotated 08-10-2026)',
   });
 });
 
+describe('hailCoordinator: a vehicle missing from the snapshot (ADR-022, annotated 08-10-2026)', () => {
+  it('drops a vehicle missing from the latest snapshot, so the hail commits on the next bus at its own commit instant', () => {
+    const s = service();
+    // V1 stands 300 m out, last reporting at T − 80 s; each snapshot re-serves that fix until V1 drops out of the feed.
+    const parked = (t: number) => v1(t, 300);
+    s.tick(T - 100_000, parked(T - 100_000));
+    s.at(T - 60_000, register, start);
+    for (const t of [T - 80_000, T - 60_000, T - 40_000]) s.tick(t, parked(T - 80_000));
+    // V2 runs route R at 10 m/s, 800 m out at T: its commit instant is T + 42.4 s.
+    for (const t of [T - 20_000, T, T + 20_000]) s.tick(t, parked(T - 80_000), v2(t, 800));
+    expect(s.kinds()).toEqual(['registered', 'present', 'eligible']);
+
+    s.tick(T + 40_000, v2(T + 40_000, 800));
+    s.at(T + 42_444);
+    expect(s.kinds()).toEqual(['registered', 'present', 'eligible']);
+    s.at(T + 42_445);
+    expect(s.records.at(-1)).toMatchObject({ kind: 'committed', vehicleId: 'V2' });
+    expect(s.records.at(-1)!.payload.deadline).toBeCloseTo(T + 72_444.4, 0);
+  });
+});
+
 describe('hailCoordinator: input it cannot use', () => {
   it('never resolves a hail for an unknown stop, and never throws on it', () => {
     const s = service();
@@ -453,10 +474,12 @@ describe('hailCoordinator: a candidate past its deadline goes to the next bus (A
 
   it('skips neither a stopped candidate nor a stale one (decisions 4 and 5)', () => {
     const s = service();
-    // V2's latest report is 40 s old at T, extrapolated to 50 m out at 10 m/s; V1 stands 50 m out.
+    // V2's latest report is 40 s old at T, extrapolated to 50 m out at 10 m/s, and each snapshot re-serves it; V1
+    // stands 50 m out.
     s.tick(T - 60_000, report('V2', 'A2', 650, T - 60_000));
-    s.tick(T - 40_000, report('V2', 'A2', 450, T - 40_000));
-    for (const t of [T - 20_000, T]) s.tick(t, v1(t, 50));
+    const v2Stale = report('V2', 'A2', 450, T - 40_000);
+    s.tick(T - 40_000, v2Stale);
+    for (const t of [T - 20_000, T]) s.tick(t, v2Stale, v1(t, 50));
 
     s.at(T, register);
 

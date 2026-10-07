@@ -64,9 +64,9 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
   const presence = new Map<string, number>();
   const here = ({ handle, stopId }: { handle: string; stopId: string }) => JSON.stringify([handle, stopId]);
   // Each vehicle's current run, keyed by vehicleId: its latest two fixes on it, with each one's match along the trip's
-  // shape. A report on another run replaces the vehicle's last, so a finished trip is no longer a candidate (ADR-022,
-  // annotated 08-10-2026).
-  // ponytail: one entry per vehicle, kept after it stops reporting; drop a vehicle unheard for some minutes if that matters.
+  // shape. A report on another run replaces the vehicle's last, so a finished trip is no longer a candidate, and a
+  // vehicle missing from the latest snapshot is dropped (ADR-022, annotated 08-10-2026), so this holds at most the
+  // feed's fleet. How long the feed keeps serving a silent vehicle's record is ADR-022's [OPEN].
   const runs = new Map<string, { key: string; previous?: VehicleReport; previousAlongM?: number; latest: VehicleReport; latestAlongM: number }>();
   let signalCount = 0;
   const tripOf = (r: VehicleReport) => (r.startDate === timetable.previousDay ? timetable.lateTrips : timetable.trips).get(r.tripId ?? '');
@@ -267,6 +267,10 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
             ? { key, previous: known.latest, previousAlongM: known.latestAlongM, latest: r, latestAlongM: predict(shape, shape[0], known.latest, r, r.at, known.latestAlongM).alongM }
             : { key, latest: r, latestAlongM: predict(shape, shape[0], { ...r, at: r.at - 1 }, r, r.at).alongM });
         }
+        // A tick is C7's whole decoded snapshot: a vehicle not in it is no longer a candidate (ADR-022, annotated
+        // 08-10-2026). Deleting from a Map while iterating it is safe in JavaScript.
+        const seen = new Set(event.reports.map((r) => r.vehicleId));
+        for (const vehicleId of runs.keys()) if (!seen.has(vehicleId)) runs.delete(vehicleId);
         for (const h of hails.values()) if (h.state === 'eligible') consider(h, now);
         return;
       }
