@@ -61,8 +61,8 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
 
   const note = (h: Hail, kind: string, payload: { [key: string]: Json } = {}, vehicleId: string | null = null) =>
     record({ kind, hailId: h.id, vehicleId, payload });
-  const end = (h: Hail, kind: string) => {
-    note(h, kind);
+  const end = (h: Hail, kind: string, payload: { [key: string]: Json } = {}, vehicleId: string | null = null) => {
+    note(h, kind, payload, vehicleId);
     hails.delete(h.id);
   };
   const wake = (h: Hail, purpose: Purpose, at: number) => {
@@ -102,13 +102,24 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
 
   // An eligible hail commits on the nearest calling vehicle one feed interval before its deadline, or at once if that
   // instant has passed (ADR-037 decision 1, annotated 07-10-2026); until then it waits on a commit wakeup, which any
-  // later report that moves the deadline replaces.
-  const consider = (h: Hail, now: number) => {
+  // later report that moves the deadline replaces. Run on eligibility, on every tick, and on its own wakeups.
+  const consider = (h: Hail, now: number, purpose?: Purpose) => {
     const [p] = calling(h, now);
     if (!p) return;
     const d = signalDeadline(now, p.distanceM, p.speedMps, decelMps2);
-    if (!d) return;
-    if (now >= d.deadline - FEED_INTERVAL_MS) commit(h, p.report.vehicleId, d.deadline);
+    const vehicleId = p.report.vehicleId;
+    // A stale prediction is no current estimate, so the hail never commits on it before the deadline, and waits for
+    // the vehicle's next report until the deadline extrapolated from it (ADR-023, ADR-037 decision 1). Still stale
+    // then, or already past it, the hail is abandoned (ADR-023, decided 07-10-2026).
+    if (p.stale) {
+      if (purpose === 'deadline' || (p.speedMps > 0 && !d)) return end(h, 'abandoned', { reason: 'stale' }, vehicleId);
+      if (d) wake(h, 'deadline', d.deadline);
+      return;
+    }
+    if (p.speedMps === 0) return;
+    // The resolved vehicle is inside its stopping distance: abandoned, not passed to the next bus (ADR-039 decision 3).
+    if (!d) return end(h, 'abandoned', { reason: 'deadline' }, vehicleId);
+    if (now >= d.deadline - FEED_INTERVAL_MS) commit(h, vehicleId, d.deadline);
     else wake(h, 'commit', d.deadline - FEED_INTERVAL_MS);
   };
   // One Signal per hail until S4 (#35) aggregates them. Committed is Delivered: re-resolving and retracting are #38's.
@@ -170,7 +181,7 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
         if (h?.wake?.at !== event.at || h.wake.purpose !== event.purpose) return;
         h.wake = undefined;
         if (event.purpose === 'dwell') eligible(h, now);
-        else consider(h, now);
+        else consider(h, now, event.purpose);
         return;
       }
       case 'tick': {

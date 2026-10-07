@@ -258,3 +258,72 @@ describe('hailCoordinator: the commit', () => {
     expect(s.records.at(-1)!.payload.deadline).toBeCloseTo(T + 22_444.4, 0);
   });
 });
+
+describe('hailCoordinator: the deadline and a stale prediction', () => {
+  it('abandons a hail that becomes eligible once its vehicle is inside its stopping distance (ADR-023 decision 4)', () => {
+    const s = service();
+    for (const t of [T - 20_000, T, T + 20_000, T + 40_000, T + 60_000]) s.tick(t, v1(t));
+
+    // At T + 75 s V1 is 50 m out at 10 m/s, inside its 75.6 m stopping distance.
+    s.at(T + 45_000, register, start);
+    s.at(T + 75_000);
+    s.at(T + 80_000, cancel);
+
+    expect(timeline(s.records)).toEqual([['registered', 45], ['present', 45], ['eligible', 75], ['abandoned', 75]]);
+    expect(s.records.at(-1)).toMatchObject({ vehicleId: 'V1', payload: { reason: 'deadline' } });
+    expect(s.signals).toEqual([]);
+  });
+
+  it('abandons a hail whose resolved vehicle passes inside its stopping distance, rather than going to the next bus (ADR-039 decision 3)', () => {
+    const s = service();
+    s.at(T - 40_000, register, start);
+    for (const t of [T - 20_000, T, T + 20_000]) s.tick(t, v2(t), v1(t));
+    // V1 speeds up to 25 m/s, 100 m out: its stopping distance is 397 m. V2, 700 m out, is not taken instead.
+    s.tick(T + 40_000, v2(T + 40_000), v1(T + 40_000, 100));
+
+    expect(timeline(s.records).at(-1)).toEqual(['abandoned', 40]);
+    expect(s.records.at(-1)).toMatchObject({ vehicleId: 'V1', payload: { reason: 'deadline' } });
+    expect(s.signals).toEqual([]);
+  });
+
+  it('does not commit on a prediction stale at the commit wakeup, and commits at once on the next fresh report before the deadline (ADR-023, ADR-037 decision 1)', () => {
+    const s = service();
+    s.at(T - 40_000, register, start);
+    for (const t of [T - 20_000, T]) s.tick(t, v1(t));
+
+    // At T + 42.4 s V1's latest report is 42 s old.
+    s.at(T + 42_445);
+    expect(s.kinds()).toEqual(['registered', 'present', 'eligible']);
+
+    s.tick(T + 50_000, v1(T + 50_000));
+    expect(timeline(s.records).at(-1)).toEqual(['committed', 50]);
+    expect(s.signals).toHaveLength(1);
+  });
+
+  it('abandons a hail still on a stale prediction at its deadline wakeup, and sends no signal (ADR-023, decided 07-10-2026)', () => {
+    const s = service();
+    s.at(T - 40_000, register, start);
+    for (const t of [T - 20_000, T]) s.tick(t, v1(t));
+
+    s.at(T + 42_445);
+    s.at(T + 72_444);
+    expect(s.kinds()).toEqual(['registered', 'present', 'eligible']);
+
+    s.at(T + 72_445);
+    expect(timeline(s.records).at(-1)).toEqual(['abandoned', 72.445]);
+    expect(s.records.at(-1)).toMatchObject({ vehicleId: 'V1', payload: { reason: 'stale' } });
+    expect(s.signals).toEqual([]);
+  });
+
+  it('abandons a hail that becomes eligible on a stale prediction past its extrapolated deadline (ADR-023, decided 07-10-2026)', () => {
+    const s = service();
+    for (const t of [T - 20_000, T]) s.tick(t, v1(t));
+
+    // At T + 75 s V1 is extrapolated to 50 m out, on a report 75 s old.
+    s.at(T + 45_000, register, start);
+    s.at(T + 75_000);
+
+    expect(timeline(s.records).at(-1)).toEqual(['abandoned', 75]);
+    expect(s.records.at(-1)!.payload).toEqual({ reason: 'stale' });
+  });
+});
