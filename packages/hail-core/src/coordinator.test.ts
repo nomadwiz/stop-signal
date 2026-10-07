@@ -287,19 +287,40 @@ describe('hailCoordinator: one run per vehicle (ADR-022, annotated 08-10-2026)',
   });
 });
 
-describe('hailCoordinator: a vehicle missing from the snapshot (ADR-022, annotated 08-10-2026)', () => {
+describe('hailCoordinator: a vehicle missing from the snapshot or silent (ADR-022, annotated and decided 08-10-2026)', () => {
   it('drops a vehicle missing from the latest snapshot, so the hail commits on the next bus at its own commit instant', () => {
     const s = service();
-    // V1 stands 300 m out, last reporting at T − 80 s; each snapshot re-serves that fix until V1 drops out of the feed.
+    // V1 stands 300 m out, last reporting at T − 40 s; each snapshot re-serves that fix until V1 drops out of the feed.
+    // It is stale from T − 10 s, so it holds the hail without committing it, and under 90 s old throughout.
     const parked = (t: number) => v1(t, 300);
-    s.tick(T - 100_000, parked(T - 100_000));
-    s.at(T - 60_000, register, start);
-    for (const t of [T - 80_000, T - 60_000, T - 40_000]) s.tick(t, parked(T - 80_000));
+    for (const t of [T - 60_000, T - 40_000]) s.tick(t, parked(t));
+    s.at(T - 30_000, register, start);
     // V2 runs route R at 10 m/s, 800 m out at T: its commit instant is T + 42.4 s.
-    for (const t of [T - 20_000, T, T + 20_000]) s.tick(t, parked(T - 80_000), v2(t, 800));
+    for (const t of [T - 20_000, T, T + 20_000]) s.tick(t, parked(T - 40_000), v2(t, 800));
     expect(s.kinds()).toEqual(['registered', 'present', 'eligible']);
 
     s.tick(T + 40_000, v2(T + 40_000, 800));
+    s.at(T + 42_444);
+    expect(s.kinds()).toEqual(['registered', 'present', 'eligible']);
+    s.at(T + 42_445);
+    expect(s.records.at(-1)).toMatchObject({ kind: 'committed', vehicleId: 'V2' });
+    expect(s.records.at(-1)!.payload.deadline).toBeCloseTo(T + 72_444.4, 0);
+  });
+
+  it('passes over a vehicle whose re-served fix is more than three feed intervals old, though still in the snapshot (ADR-022, decided 08-10-2026)', () => {
+    const s = service();
+    // V1 stands 300 m out, last reporting at T − 80 s, and every snapshot re-serves that fix: stale, it holds the hail
+    // until the fix is 90 s old, at T + 10 s, and no longer once it is older.
+    const parked = (t: number) => v1(t, 300);
+    for (const t of [T - 100_000, T - 80_000]) s.tick(t, parked(t));
+    s.at(T - 60_000, register, start);
+    // V2 runs route R at 10 m/s, 800 m out at T: its commit instant is T + 42.4 s.
+    for (const t of [T - 20_000, T, T + 10_000]) s.tick(t, parked(T - 80_000), v2(t, 800));
+    // At T + 10 s, its fix exactly 90 s old, V1 still holds the hail: no commit is scheduled on V2.
+    expect(s.scheduled.filter(({ event }) => event.kind === 'wakeup' && event.purpose === 'commit')).toEqual([]);
+    expect(s.kinds()).toEqual(['registered', 'present', 'eligible']);
+
+    s.tick(T + 20_000, parked(T - 80_000), v2(T + 20_000, 800));
     s.at(T + 42_444);
     expect(s.kinds()).toEqual(['registered', 'present', 'eligible']);
     s.at(T + 42_445);

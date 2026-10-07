@@ -66,7 +66,11 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
   // Each vehicle's current run, keyed by vehicleId: its latest two fixes on it, with each one's match along the trip's
   // shape. A report on another run replaces the vehicle's last, so a finished trip is no longer a candidate, and a
   // vehicle missing from the latest snapshot is dropped (ADR-022, annotated 08-10-2026), so this holds at most the
-  // feed's fleet. How long the feed keeps serving a silent vehicle's record is ADR-022's [OPEN].
+  // feed's fleet.
+  // The feed re-serves a silent vehicle's last fix for about 900 s before dropping it, so a vehicle whose latest report
+  // is older than this is no longer a candidate, though still in the snapshot (ADR-022, decided 08-10-2026). Applied
+  // in calling() alone: every decision reads candidates through it, between ticks too, and F's drop already bounds runs.
+  const SILENT_MS = 3 * FEED_INTERVAL_MS;
   const runs = new Map<string, { key: string; previous?: VehicleReport; previousAlongM?: number; latest: VehicleReport; latestAlongM: number }>();
   let signalCount = 0;
   const tripOf = (r: VehicleReport) => (r.startDate === timetable.previousDay ? timetable.lateTrips : timetable.trips).get(r.tripId ?? '');
@@ -99,7 +103,8 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
   };
 
   // The runs of the hail's route that call at its stop and have not passed it, nearest first (ADR-036), each with S2's
-  // prediction at now. A run with one fix has no speed yet, and an unknown stop has no candidates.
+  // prediction at now. A run with one fix has no speed yet, a silent one is passed over, and an unknown stop has no
+  // candidates.
   // ponytail: scans every run per eligible hail per event; index the runs by route if the live feed makes this slow.
   const calling = (h: Hail, now: number) => {
     const stop = timetable.stops.get(h.stopId);
@@ -107,7 +112,7 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
     const predicted = new Map<VehicleReport, ReturnType<typeof predict>>();
     for (const { previous, previousAlongM, latest } of runs.values()) {
       const trip = tripOf(latest)!;
-      if (!previous || trip.routeId !== h.routeId) continue;
+      if (!previous || trip.routeId !== h.routeId || now - latest.at > SILENT_MS) continue;
       predicted.set(latest, predict(timetable.shapes.get(trip.shapeId)!, stop, previous, latest, now, previousAlongM));
     }
     const candidates = [...predicted].map(([report, p]) => ({ report, distanceM: p.distanceM > 0 ? p.distanceM : null }));
