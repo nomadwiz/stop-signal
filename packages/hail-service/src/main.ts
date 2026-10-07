@@ -1,7 +1,7 @@
 // Usage: PORT=8080 node packages/hail-service/src/main.ts
 // Runs the hail service (ADR-032, annotated 05-10-2026): the decision loop on the system clock, applying each event
 // through the hail coordinator (#32), the driver and passenger channels, and the one HTTP server, on 127.0.0.1 only,
-// behind Caddy, which terminates TLS (#50). Decisions are written to stdout as JSON Lines.
+// behind Caddy, which terminates TLS (#50). Decisions are written to stdout as JSON Lines, and nothing else is.
 import type { AddressInfo } from 'node:net';
 import { hailCoordinator } from '../../hail-core/src/coordinator.ts';
 import type { HailEvent } from '../../hail-core/src/events.ts';
@@ -34,5 +34,5 @@ setInterval(wakeups.wake, WAKE_INTERVAL_MS);
 const server = hailServer({ channel: signals, passengers: passengerChannel(wakeups.submit), submit: wakeups.submit });
 server.listen(Number(process.env.PORT ?? 8080), '127.0.0.1', () => {
   const { address, port } = server.address() as AddressInfo;
-  console.log(`hail service listening on ${address}:${port}`);
+  console.error(`hail service listening on ${address}:${port}`);
 });

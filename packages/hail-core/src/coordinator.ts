@@ -51,12 +51,14 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
   // Insertion order, so every event reaches the hails it names in the order they registered. Ids count up from h1,
   // so a replay numbers them alike.
   // ponytail: a committed hail left Unattended is never spent (ADR-010 decision 4), so it stays here until #61's
-  // outcomes end it.
+  // outcomes end it; a hail for an unknown stop or route stays until cancelled. Reject unknown stops at register if
+  // that growth matters.
   const hails = new Map<string, Hail>();
   let hailCount = 0;
   // When each passenger arrived at each stop, keyed [handle, stop]: presence is the passenger's, not a hail's, so a hail
   // registered while they wait counts its dwell from their arrival (ADR-040, decided 07-10-2026). Only a presence-end
   // removes an entry, so a lost connection keeps it and a return starts a fresh dwell (ADR-040 decision 2).
+  // ponytail: a presence-start for a handle with no hail is held until its presence-end, for the same reason.
   const presence = new Map<string, number>();
   const here = ({ handle, stopId }: { handle: string; stopId: string }) => JSON.stringify([handle, stopId]);
   // Each vehicle run's latest two fixes, with each one's match along the trip's shape.
@@ -125,9 +127,11 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
   // ponytail: places that stop by predict at speed 0, nearest over the whole shape, as predict places stopId itself.
   const reach = (r: VehicleReport, stopId: string) => {
     const trip = tripOf(r)!;
-    const previous = timetable.stops.get(trip.stopTimes[trip.stopTimes.findIndex((st) => st.stopId === stopId) - 1]?.stopId ?? '');
+    const i = trip.stopTimes.findIndex((st) => st.stopId === stopId);
+    const previous = timetable.stops.get(trip.stopTimes[i - 1]?.stopId ?? '');
+    if (!previous) return -1;
     const shape = timetable.shapes.get(trip.shapeId)!;
-    return previous ? predict(shape, timetable.stops.get(stopId)!, { ...previous, at: 0 }, { ...previous, at: 1 }, 1).distanceM + CALL_RADIUS_M : -1;
+    return predict(shape, timetable.stops.get(stopId)!, { ...previous, at: 0 }, { ...previous, at: 1 }, 1).distanceM + CALL_RADIUS_M;
   };
 
   // An eligible hail commits on the nearest calling vehicle one feed interval before its deadline, or at once if that
@@ -166,12 +170,11 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
     signals.signal({ id: signalId, vehicleId, stopId: h.stopId });
   };
 
-  const registration = ({ handle, stopId, routeId }: { handle: string; stopId: string; routeId: string }) =>
-    [...hails.values()].find((h) => h.handle === handle && h.stopId === stopId && h.routeId === routeId);
-
   // The live hails a presence event moves: every one of that passenger's at that stop.
   const atStop = (stop: { handle: string; stopId: string }) =>
     [...hails.values()].filter((h) => h.handle === stop.handle && h.stopId === stop.stopId);
+  // The one live hail a register or cancel names, by handle, stop and route (ADR-032 decision 4).
+  const registration = (e: { handle: string; stopId: string; routeId: string }) => atStop(e).find((h) => h.routeId === e.routeId);
 
   return (event) => {
     const now = clock.now();
@@ -189,6 +192,7 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
       }
       case 'cancel': {
         // Only a cancel withdraws a hail (ADR-010 decision 2, ADR-040).
+        // ponytail: a cancel after the commit leaves the signal on the console until #38 retracts it.
         const h = registration(event);
         if (h) end(h, 'withdrawn');
         return;
