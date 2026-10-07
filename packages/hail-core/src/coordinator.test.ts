@@ -478,20 +478,49 @@ describe('hailCoordinator: a candidate past its deadline goes to the next bus (A
     expect(s.signals[0].vehicleId).toBe('V2');
   });
 
-  it('makes "Hail the next 70" eligible at once for a passenger present past the dwell, resolving past the bus too close to stop (ADR-040, decided 07-10-2026)', () => {
+  it('skips a bus first seen already inside its stopping distance, and resolves to the next bus (ADR-039, annotated 08-10-2026)', () => {
     const s = service();
     s.at(T - 60_000, register, start);
     s.at(T - 30_000);
     s.tick(T - 20_000, v1(T - 20_000, 260), v2(T - 20_000, 800));
-    // V1 is 60 m out at 10 m/s, inside its stopping distance: h1 ends in cannot hail, and the passenger arms again.
+    // V1 is first predictable at T, 60 m out at 10 m/s, inside its stopping distance; the hail never resolved to it.
     s.tick(T, v1(T, 60), v2(T, 800));
-    s.at(T, register);
     for (const t of [T + 20_000, T + 40_000]) s.tick(t, v2(t, 800));
     s.at(T + 42_445);
 
+    expect(timeline(s.records)).toEqual([['registered', -60], ['present', -60], ['eligible', -30], ['skipped', 0], ['committed', 42.445]]);
+    expect(s.records[3].payload).toEqual({ candidates: ['V1'] });
+    expect(s.signals).toEqual([{ id: 's1', vehicleId: 'V2', stopId: 'S' }]);
+  });
+
+  it('counts a stale pick as resolved to, so its next fresh report inside its stopping distance abandons the hail (ADR-039, annotated 08-10-2026)', () => {
+    const s = service();
+    // At T, when the hail becomes eligible, V1's latest report is 40 s old and extrapolated to 400 m out: the hail
+    // resolves to it, stale. At T + 5 s V1 reports 100 m out at 15.6 m/s, inside its 165 m stopping distance.
+    for (const t of [T - 60_000, T - 40_000]) s.tick(t, v1(t, 400 - (t - T) / 100));
+    s.at(T - 30_000, register, start);
+    s.at(T);
+    s.tick(T + 5_000, v1(T + 5_000, 100));
+
+    expect(timeline(s.records)).toEqual([['registered', -30], ['present', -30], ['eligible', 0], ['abandoned', 5]]);
+    expect(s.records.at(-1)).toMatchObject({ vehicleId: 'V1', payload: { reason: 'deadline' } });
+  });
+
+  it('makes "Hail the next 70" eligible at once for a passenger present past the dwell, resolving past the bus too close to stop (ADR-040, decided 07-10-2026)', () => {
+    const s = service();
+    s.at(T - 60_000, register, start);
+    s.at(T - 30_000);
+    for (const t of [T - 20_000, T, T + 20_000]) s.tick(t, v1(t), v2(t));
+    // V1, which h1 resolved to, speeds up to 25 m/s, 100 m out: h1 ends in cannot hail, and the passenger arms again.
+    s.tick(T + 40_000, v1(T + 40_000, 100), v2(T + 40_000));
+    s.at(T + 40_000, register);
+    // V2 is 700 m out at T + 40 s, so its deadline is T + 102.4 s and its commit instant T + 72.4 s.
+    s.tick(T + 60_000, v2(T + 60_000));
+    s.at(T + 72_445);
+
     expect(s.records.map((r) => [r.kind, (r.at - T) / 1000, r.hailId])).toEqual([
-      ['registered', -60, 'h1'], ['present', -60, 'h1'], ['eligible', -30, 'h1'], ['abandoned', 0, 'h1'],
-      ['registered', 0, 'h2'], ['skipped', 0, 'h2'], ['present', 0, 'h2'], ['eligible', 0, 'h2'], ['committed', 42.445, 'h2'],
+      ['registered', -60, 'h1'], ['present', -60, 'h1'], ['eligible', -30, 'h1'], ['abandoned', 40, 'h1'],
+      ['registered', 40, 'h2'], ['skipped', 40, 'h2'], ['present', 40, 'h2'], ['eligible', 40, 'h2'], ['committed', 72.445, 'h2'],
     ]);
     expect(s.signals).toEqual([{ id: 's1', vehicleId: 'V2', stopId: 'S' }]);
   });
