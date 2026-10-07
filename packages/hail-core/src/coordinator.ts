@@ -2,9 +2,10 @@
 // Figure 5.4). One function applies every event the loop hands it, in queue order (ADR-002), and writes exactly one
 // decision record per transition (ADR-017).
 import type { Clock } from './clock.ts';
+import { signalDeadline } from './deadline.ts';
 import type { HailEvent } from './events.ts';
-import type { Point } from './predict.ts';
-import type { Timetable } from './resolve.ts';
+import { FEED_INTERVAL_MS, predict, type Point } from './predict.ts';
+import { callingAt, type Timetable, type VehicleReport } from './resolve.ts';
 import type { SignalPort } from './signal.ts';
 import type { Json, recorder } from './trace.ts';
 
@@ -13,7 +14,7 @@ export interface ServiceDay extends Timetable {
   trips: ReadonlyMap<string, Trip>;
   lateTrips: ReadonlyMap<string, Trip>;
   stops: ReadonlyMap<string, Point>;
-  shapes: ReadonlyMap<string, readonly Point[]>;
+  shapes: ReadonlyMap<string, Point[]>;
 }
 interface Trip { routeId: string; shapeId: string; stopTimes: readonly { stopId: string }[] }
 
@@ -25,13 +26,16 @@ interface Hail {
   handle: string;
   stopId: string;
   routeId: string;
-  state: 'registered' | 'present' | 'eligible';
+  state: 'registered' | 'present' | 'eligible' | 'committed';
   left: boolean;
   wake?: { at: number; purpose: Purpose };
 }
 type Purpose = Extract<HailEvent, { kind: 'wakeup' }>['purpose'];
 
-export function hailCoordinator({ clock, record, schedule, dwellMs }: {
+// A vehicle run: one vehicle on one trip on one service day (ADR-025).
+const run = ({ vehicleId, tripId, startDate }: VehicleReport) => JSON.stringify([vehicleId, tripId, startDate]);
+
+export function hailCoordinator({ clock, record, signals, schedule, timetable, decelMps2, dwellMs }: {
   clock: Clock;
   record: ReturnType<typeof recorder>;
   signals: SignalPort;
@@ -49,6 +53,11 @@ export function hailCoordinator({ clock, record, schedule, dwellMs }: {
   // removes an entry, so a lost connection keeps it and a return starts a fresh dwell (ADR-040 decision 2).
   const presence = new Map<string, number>();
   const here = ({ handle, stopId }: { handle: string; stopId: string }) => JSON.stringify([handle, stopId]);
+  // Each vehicle run's latest two fixes, with each one's match along the trip's shape.
+  // ponytail: one entry per vehicle run per service day, never dropped; drop a run once its trip ends if memory matters.
+  const runs = new Map<string, { previous?: VehicleReport; previousAlongM?: number; latest: VehicleReport; latestAlongM: number }>();
+  let signalCount = 0;
+  const tripOf = (r: VehicleReport) => (r.startDate === timetable.previousDay ? timetable.lateTrips : timetable.trips).get(r.tripId ?? '');
 
   const note = (h: Hail, kind: string, payload: { [key: string]: Json } = {}, vehicleId: string | null = null) =>
     record({ kind, hailId: h.id, vehicleId, payload });
@@ -66,12 +75,49 @@ export function hailCoordinator({ clock, record, schedule, dwellMs }: {
   const arrive = (h: Hail, kind: 'present' | 'returned', since: number, now: number) => {
     h.state = 'present';
     note(h, kind);
-    if (now >= since + dwellMs) eligible(h);
+    if (now >= since + dwellMs) eligible(h, now);
     else wake(h, 'dwell', since + dwellMs);
   };
-  const eligible = (h: Hail) => {
+  const eligible = (h: Hail, now: number) => {
     h.state = 'eligible';
     note(h, 'eligible');
+    consider(h, now);
+  };
+
+  // The runs of the hail's route that call at its stop and have not passed it, nearest first (ADR-036), each with S2's
+  // prediction at now. A run with one fix has no speed yet, and an unknown stop has no candidates.
+  // ponytail: scans every run per eligible hail per event; index the runs by route if the live feed makes this slow.
+  const calling = (h: Hail, now: number) => {
+    const stop = timetable.stops.get(h.stopId);
+    if (!stop) return [];
+    const predicted = new Map<VehicleReport, ReturnType<typeof predict>>();
+    for (const { previous, previousAlongM, latest } of runs.values()) {
+      const trip = tripOf(latest)!;
+      if (!previous || trip.routeId !== h.routeId) continue;
+      predicted.set(latest, predict(timetable.shapes.get(trip.shapeId)!, stop, previous, latest, now, previousAlongM));
+    }
+    const candidates = [...predicted].map(([report, p]) => ({ report, distanceM: p.distanceM > 0 ? p.distanceM : null }));
+    return callingAt(timetable, h.stopId, candidates).map(({ report }) => ({ report, ...predicted.get(report)! }));
+  };
+
+  // An eligible hail commits on the nearest calling vehicle one feed interval before its deadline, or at once if that
+  // instant has passed (ADR-037 decision 1, annotated 07-10-2026); until then it waits on a commit wakeup, which any
+  // later report that moves the deadline replaces.
+  const consider = (h: Hail, now: number) => {
+    const [p] = calling(h, now);
+    if (!p) return;
+    const d = signalDeadline(now, p.distanceM, p.speedMps, decelMps2);
+    if (!d) return;
+    if (now >= d.deadline - FEED_INTERVAL_MS) commit(h, p.report.vehicleId, d.deadline);
+    else wake(h, 'commit', d.deadline - FEED_INTERVAL_MS);
+  };
+  // One Signal per hail until S4 (#35) aggregates them. Committed is Delivered: re-resolving and retracting are #38's.
+  const commit = (h: Hail, vehicleId: string, deadline: number | null) => {
+    h.state = 'committed';
+    h.wake = undefined;
+    const signalId = `s${++signalCount}`;
+    note(h, 'committed', { deadline, signalId }, vehicleId);
+    signals.signal({ id: signalId, vehicleId, stopId: h.stopId });
   };
 
   const registration = ({ handle, stopId, routeId }: { handle: string; stopId: string; routeId: string }) =>
@@ -123,7 +169,22 @@ export function hailCoordinator({ clock, record, schedule, dwellMs }: {
         const h = hails.get(event.hailId);
         if (h?.wake?.at !== event.at || h.wake.purpose !== event.purpose) return;
         h.wake = undefined;
-        if (event.purpose === 'dwell') eligible(h);
+        if (event.purpose === 'dwell') eligible(h, now);
+        else consider(h, now);
+        return;
+      }
+      case 'tick': {
+        for (const r of event.reports) {
+          const shape = timetable.shapes.get(tripOf(r)?.shapeId ?? '');
+          const known = runs.get(run(r));
+          // An unknown trip, a shape with no line to measure along, and a fix no newer than the run's latest are ignored.
+          if (!shape || shape.length < 2 || !(r.at > (known?.latest.at ?? -Infinity))) continue;
+          // Each fix is matched on from the one before it; a run's first, over the whole shape (ADR-022 decision 5).
+          runs.set(run(r), known
+            ? { previous: known.latest, previousAlongM: known.latestAlongM, latest: r, latestAlongM: predict(shape, shape[0], known.latest, r, r.at, known.latestAlongM).alongM }
+            : { latest: r, latestAlongM: predict(shape, shape[0], { ...r, at: r.at - 1 }, r, r.at).alongM });
+        }
+        for (const h of hails.values()) if (h.state === 'eligible') consider(h, now);
         return;
       }
     }

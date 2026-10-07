@@ -181,3 +181,80 @@ describe('hailCoordinator: presence and dwell', () => {
     expect(timeline(s.records)).toEqual([['registered', 40], ['present', 40], ['eligible', 40]]);
   });
 });
+
+// V1 runs route R's trip A1 east at 10 m/s, 800 m before S at T; V2 runs route R 300 m behind it, and V3 runs route Q
+// 200 m ahead of it. At 10 m/s the stopping distance is 10 × 2 + 10² / (2 × 0.9) = 75.6 m, so V1's deadline is
+// (800 − 75.6) / 10 = 72.4 s after T, and its commit instant 30 s before that, T + 42.4 s.
+const v1 = (t: number, m = 800 - (t - T) / 100) => report('V1', 'A1', m, t);
+const v2 = (t: number) => report('V2', 'A2', 1_100 - (t - T) / 100, t);
+const v3 = (t: number) => report('V3', 'B1', 600 - (t - T) / 100, t);
+
+describe('hailCoordinator: the commit', () => {
+  it('commits one feed interval before the deadline on the nearest calling vehicle of its route, handing one Signal to SignalPort (ADR-036, ADR-037 decision 1)', () => {
+    const s = service();
+    s.at(T - 40_000, register, start);
+    for (const t of [T - 20_000, T, T + 20_000, T + 40_000]) s.tick(t, v3(t), v2(t), v1(t));
+
+    s.at(T + 42_444);
+    expect(s.kinds()).toEqual(['registered', 'present', 'eligible']);
+
+    s.at(T + 42_445);
+    expect(s.records.at(-1)).toMatchObject({ at: T + 42_445, kind: 'committed', hailId: 'h1', vehicleId: 'V1', payload: { signalId: 's1' } });
+    expect(s.records.at(-1)!.payload.deadline).toBeCloseTo(T + 72_444.4, 0);
+    expect(s.signals).toEqual([{ id: 's1', vehicleId: 'V1', stopId: 'S' }]);
+    expect(s.retracted).toEqual([]);
+  });
+
+  it('moves the commit when a report moves the deadline, and the wakeup it replaced commits nothing', () => {
+    const s = service();
+    s.at(T - 40_000, register, start);
+    for (const t of [T - 20_000, T, T + 20_000]) s.tick(t, v1(t));
+    // V1 slows to 7.5 m/s: 450 m out, a stopping distance of 46.3 m, so the deadline is 53.8 s on, T + 93.8 s.
+    s.tick(T + 40_000, v1(T + 40_000, 450));
+
+    s.at(T + 42_445);
+    s.at(T + 63_833);
+    expect(s.kinds()).toEqual(['registered', 'present', 'eligible']);
+
+    s.at(T + 63_834);
+    expect(timeline(s.records).at(-1)).toEqual(['committed', 63.834]);
+    expect(s.records.at(-1)!.payload.deadline).toBeCloseTo(T + 93_833.3, 0);
+    expect(s.signals).toHaveLength(1);
+  });
+
+  it('commits at once a hail that becomes eligible after its commit instant and before its deadline (ADR-037, annotated 07-10-2026)', () => {
+    const s = service();
+    for (const t of [T - 20_000, T, T + 20_000, T + 40_000]) s.tick(t, v1(t));
+
+    s.at(T + 20_000, register, start);
+    s.at(T + 50_000);
+
+    expect(timeline(s.records)).toEqual([['registered', 20], ['present', 20], ['eligible', 50], ['committed', 50]]);
+    expect(s.records.at(-1)!.payload.deadline).toBeCloseTo(T + 72_444.4, 0);
+  });
+
+  it("carries each fix's match along the shape to the next, so a loop's second pass stays the second pass (ADR-022 decision 5)", () => {
+    // predict.test.ts's loop: a road driven twice, 20 m apart, 1,000 m east, 20 m north, 1,000 m back west, then on
+    // west to S, 2,320 m along.
+    const at = (north: number, east: number) => ({ lat: LAT + north / M_PER_DEGREE, lon: 174.76 + east / KX });
+    const loop: ServiceDay = {
+      ...road,
+      stops: new Map([['S', at(20, -300)], ['P', at(20, 300)]]),
+      trips: new Map([['A1', { routeId: 'R', shapeId: 'loop', stopTimes: [{ stopId: 'P' }, { stopId: 'S' }] }]]),
+      tripsAtStop: new Map([['S', ['A1']]]),
+      shapes: new Map([['loop', [at(0, 0), at(0, 1_000), at(20, 1_000), at(20, 0), at(20, -500)]]]),
+    };
+    const fix = (north: number, east: number, t: number): VehicleReport => ({ vehicleId: 'V1', tripId: 'A1', startDate: DAY, ...at(north, east), at: t });
+    const s = service(loop);
+    s.at(T - 70_000, register, start);
+
+    // V1 runs west on the second pass at 10 m/s; its latest fix strays 15 m south, nearer the first pass. Matched on
+    // from 1,620 m it sits 1,820 m along, 500 m from S, so the deadline is 42.4 s on and the commit 12.4 s on.
+    s.tick(T - 40_000, fix(20, 400, T - 40_000));
+    s.tick(T - 20_000, fix(5, 200, T - 20_000));
+    s.at(T - 7_555);
+
+    expect(s.records.at(-1)).toMatchObject({ kind: 'committed', vehicleId: 'V1' });
+    expect(s.records.at(-1)!.payload.deadline).toBeCloseTo(T + 22_444.4, 0);
+  });
+});
