@@ -327,3 +327,44 @@ describe('hailCoordinator: the deadline and a stale prediction', () => {
     expect(s.records.at(-1)!.payload).toEqual({ reason: 'stale' });
   });
 });
+
+describe("hailCoordinator: a stopped vehicle (ADR-037's [DECIDED:05-10-2026])", () => {
+  it("commits at once on a stopped vehicle within its previous stop's distance plus CALL_RADIUS_M, with no deadline", () => {
+    const s = service();
+    s.at(T - 40_000, register, start);
+    for (const t of [T - 20_000, T]) s.tick(t, v1(t, 380));
+
+    expect(timeline(s.records).at(-1)).toEqual(['committed', 0]);
+    expect(s.records.at(-1)).toMatchObject({ vehicleId: 'V1', payload: { deadline: null, signalId: 's1' } });
+    expect(s.signals).toEqual([{ id: 's1', vehicleId: 'V1', stopId: 'S' }]);
+  });
+
+  it('waits on a stopped vehicle beyond that reach', () => {
+    const s = service();
+    s.at(T - 40_000, register, start);
+    for (const t of [T - 20_000, T, T + 20_000]) s.tick(t, v1(t, 450));
+
+    expect(s.kinds()).toEqual(['registered', 'present', 'eligible']);
+  });
+
+  it('gives a trip whose first stop is the registered stop no rule', () => {
+    const s = service();
+    s.at(T - 40_000, { ...register, routeId: 'F' }, start);
+    for (const t of [T - 20_000, T]) s.tick(t, report('V1', 'F1', 10, t));
+
+    expect(s.kinds()).toEqual(['registered', 'present', 'eligible']);
+  });
+
+  it('waits on a stale stopped vehicle within that reach, and commits on its next fresh report', () => {
+    const s = service();
+    for (const t of [T - 60_000, T - 40_000]) s.tick(t, v1(t, 380));
+
+    // At T, when the hail becomes eligible, V1's latest report is 40 s old.
+    s.at(T - 30_000, register, start);
+    s.at(T);
+    expect(s.kinds()).toEqual(['registered', 'present', 'eligible']);
+
+    s.tick(T + 10_000, v1(T + 10_000, 380));
+    expect(timeline(s.records).at(-1)).toEqual(['committed', 10]);
+  });
+});

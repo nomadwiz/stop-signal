@@ -5,7 +5,7 @@ import type { Clock } from './clock.ts';
 import { signalDeadline } from './deadline.ts';
 import type { HailEvent } from './events.ts';
 import { FEED_INTERVAL_MS, predict, type Point } from './predict.ts';
-import { callingAt, type Timetable, type VehicleReport } from './resolve.ts';
+import { CALL_RADIUS_M, callingAt, type Timetable, type VehicleReport } from './resolve.ts';
 import type { SignalPort } from './signal.ts';
 import type { Json, recorder } from './trace.ts';
 
@@ -100,6 +100,16 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
     return callingAt(timetable, h.stopId, candidates).map(({ report }) => ({ report, ...predicted.get(report)! }));
   };
 
+  // Metres along the report's trip shape from the trip's stop before stopId to stopId, plus CALL_RADIUS_M; -1 when stopId
+  // is the trip's first stop, so no stopped vehicle on it is due (ADR-037's [DECIDED:05-10-2026]). m1.ts's reach.
+  // ponytail: places that stop by predict at speed 0, nearest over the whole shape, as predict places stopId itself.
+  const reach = (r: VehicleReport, stopId: string) => {
+    const trip = tripOf(r)!;
+    const previous = timetable.stops.get(trip.stopTimes[trip.stopTimes.findIndex((st) => st.stopId === stopId) - 1]?.stopId ?? '');
+    const shape = timetable.shapes.get(trip.shapeId)!;
+    return previous ? predict(shape, timetable.stops.get(stopId)!, { ...previous, at: 0 }, { ...previous, at: 1 }, 1).distanceM + CALL_RADIUS_M : -1;
+  };
+
   // An eligible hail commits on the nearest calling vehicle one feed interval before its deadline, or at once if that
   // instant has passed (ADR-037 decision 1, annotated 07-10-2026); until then it waits on a commit wakeup, which any
   // later report that moves the deadline replaces. Run on eligibility, on every tick, and on its own wakeups.
@@ -116,7 +126,12 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
       if (d) wake(h, 'deadline', d.deadline);
       return;
     }
-    if (p.speedMps === 0) return;
+    // At speed 0 no deadline follows; a stopped vehicle within reach is due at once, and one beyond waits for its next
+    // report (ADR-037's [DECIDED:05-10-2026]).
+    if (p.speedMps === 0) {
+      if (p.distanceM <= reach(p.report, h.stopId)) commit(h, vehicleId, null);
+      return;
+    }
     // The resolved vehicle is inside its stopping distance: abandoned, not passed to the next bus (ADR-039 decision 3).
     if (!d) return end(h, 'abandoned', { reason: 'deadline' }, vehicleId);
     if (now >= d.deadline - FEED_INTERVAL_MS) commit(h, vehicleId, d.deadline);
