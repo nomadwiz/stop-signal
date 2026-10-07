@@ -19,8 +19,9 @@ export interface ServiceDay extends Timetable {
 interface Trip { routeId: string; shapeId: string; stopTimes: readonly { stopId: string }[] }
 
 // A live hail; a terminal transition deletes it. The handle is a credential (ADR-032 decision 5), so no record carries
-// it: records name the hail by id. left is set by a reported departure with nothing delivered (ADR-040). wake is the one
-// wakeup the hail now waits for; any other wakeup for it is stale and does nothing.
+// it: records name the hail by id. left is set by a reported departure with nothing delivered (ADR-040), and unattended by
+// a connection lost at the stop (ADR-010 decision 3). wake is the one wakeup the hail now waits for; any other wakeup for
+// it is stale and does nothing.
 interface Hail {
   id: string;
   handle: string;
@@ -28,6 +29,7 @@ interface Hail {
   routeId: string;
   state: 'registered' | 'present' | 'eligible' | 'committed';
   left: boolean;
+  unattended: boolean;
   // The vehicle runs this hail passed over for being too close to stop, never resolved to again (ADR-039 decision 2).
   skipped: Set<string>;
   wake?: { at: number; purpose: Purpose };
@@ -48,6 +50,8 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
 }): (event: HailEvent) => void {
   // Insertion order, so every event reaches the hails it names in the order they registered. Ids count up from h1,
   // so a replay numbers them alike.
+  // ponytail: a committed hail left Unattended is never spent (ADR-010 decision 4), so it stays here until #61's
+  // outcomes end it.
   const hails = new Map<string, Hail>();
   let hailCount = 0;
   // When each passenger arrived at each stop, keyed [handle, stop]: presence is the passenger's, not a hail's, so a hail
@@ -175,7 +179,7 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
       case 'register': {
         if (registration(event)) return;
         const { handle, stopId, routeId, leadTimeS } = event;
-        const h: Hail = { id: `h${++hailCount}`, handle, stopId, routeId, state: 'registered', left: false, skipped: new Set() };
+        const h: Hail = { id: `h${++hailCount}`, handle, stopId, routeId, state: 'registered', left: false, unattended: false, skipped: new Set() };
         hails.set(h.id, h);
         note(h, 'registered', { stopId, routeId, leadTimeS });
         skip(h, now);
@@ -197,13 +201,25 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
       case 'presence-end': {
         presence.delete(here(event));
         for (const h of atStop(event)) {
-          // Back to Registered, uncommitted, until a return (ADR-040 decision 3).
+          // Back to Registered, uncommitted, until a return (ADR-040 decision 3). The departure is reported, so it also
+          // ends Unattended. A delivered hail is spent, but never from Unattended (ADR-010 decisions 1 and 4, FR13).
           if (h.state === 'present' || h.state === 'eligible') {
             h.state = 'registered';
             h.left = true;
+            h.unattended = false;
             h.wake = undefined;
             note(h, 'left');
-          }
+          } else if (h.state === 'committed' && !h.unattended) end(h, 'spent');
+        }
+        return;
+      }
+      case 'connection-lost': {
+        // At the stop, the hail carries on to its own deadline, marked Unattended (ADR-010 decision 3); away from it,
+        // after a reported departure, it stays Registered and uncommitted (ADR-040 decision 5).
+        for (const h of hails.values()) {
+          if (h.handle !== event.handle || h.state === 'registered' || h.unattended) continue;
+          h.unattended = true;
+          note(h, 'unattended');
         }
         return;
       }

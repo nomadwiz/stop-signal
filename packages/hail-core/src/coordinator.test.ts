@@ -450,3 +450,73 @@ describe('hailCoordinator: a candidate past its deadline goes to the next bus (A
     expect(s.signals).toEqual([{ id: 's1', vehicleId: 'V2', stopId: 'S' }]);
   });
 });
+
+describe('hailCoordinator: a lost connection and a spent registration (ADR-010, ADR-040)', () => {
+  it('never commits a hail whose connection drops after a reported departure (ADR-040 decision 5)', () => {
+    const s = service();
+    s.at(T - 40_000, register, start);
+    s.at(T - 35_000, end);
+    s.at(T - 30_000, lost);
+    for (const t of [T - 20_000, T, T + 20_000, T + 40_000]) s.tick(t, v1(t));
+    s.at(T + 42_445);
+
+    expect(s.kinds()).toEqual(['registered', 'present', 'left']);
+    expect(s.signals).toEqual([]);
+  });
+
+  it('marks an eligible hail Unattended when its connection drops, and still commits it (ADR-010 decision 3)', () => {
+    const s = service();
+    s.at(T - 40_000, register, start);
+    for (const t of [T - 20_000, T]) s.tick(t, v1(t));
+    s.at(T + 10_000, lost, lost);
+    for (const t of [T + 20_000, T + 40_000]) s.tick(t, v1(t));
+    s.at(T + 42_445);
+
+    expect(timeline(s.records)).toEqual([['registered', -40], ['present', -40], ['eligible', 0], ['unattended', 10], ['committed', 42.445]]);
+    expect(s.signals).toHaveLength(1);
+  });
+
+  it('treats a presence-end while Unattended and uncommitted as a departure, clearing Unattended', () => {
+    const s = service();
+    s.at(T - 40_000, register, start);
+    s.at(T - 35_000, lost);
+    s.at(T - 30_000, end);
+    s.at(T - 20_000, start);
+    s.at(T - 10_000, lost);
+
+    expect(s.kinds()).toEqual(['registered', 'present', 'unattended', 'left', 'returned', 'unattended']);
+  });
+
+  it('spends a delivered hail on a presence-end (ADR-010 decision 1), so the next register is a new hail', () => {
+    const s = service();
+    s.at(T - 40_000, register, start);
+    for (const t of [T - 20_000, T]) s.tick(t, v1(t, 380));
+    s.at(T + 10_000, end);
+    s.at(T + 20_000, register);
+
+    expect(s.records.map((r) => [r.kind, r.hailId])).toEqual([
+      ['registered', 'h1'], ['present', 'h1'], ['eligible', 'h1'], ['committed', 'h1'], ['spent', 'h1'], ['registered', 'h2'],
+    ]);
+  });
+
+  it('never spends a delivered hail from Unattended (ADR-010 decision 4)', () => {
+    const s = service();
+    s.at(T - 40_000, register, start);
+    for (const t of [T - 20_000, T]) s.tick(t, v1(t, 380));
+    s.at(T + 5_000, lost);
+    s.at(T + 10_000, end);
+    s.at(T + 20_000, register);
+
+    expect(s.kinds()).toEqual(['registered', 'present', 'eligible', 'committed', 'unattended']);
+  });
+
+  it('withdraws a delivered hail on cancel', () => {
+    const s = service();
+    s.at(T - 40_000, register, start);
+    for (const t of [T - 20_000, T]) s.tick(t, v1(t, 380));
+    s.at(T + 10_000, cancel);
+
+    expect(s.kinds()).toEqual(['registered', 'present', 'eligible', 'committed', 'withdrawn']);
+    expect(s.retracted).toEqual([]);
+  });
+});
