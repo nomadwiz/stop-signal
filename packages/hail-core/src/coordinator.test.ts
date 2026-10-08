@@ -336,6 +336,17 @@ describe('hailCoordinator: aggregation (#35)', () => {
     expect(committed(s).map((r) => [r.hailId, r.payload.signalId])).toEqual([['h2', 's1'], ['h1', 's2']]);
     expect(s.signals.map((x) => [x.id, x.stopId, x.waiting])).toEqual([['s1', 'P', 1], ['s2', 'S', 1]]);
   });
+
+  it('gives a hail on the same vehicle\'s next run at the same stop its own signal (ADR-025)', () => {
+    const s = service();
+    s.at(T - 60_000, ...arrived(1, 2));
+    moves(s, T - 10_000, 400);
+    moves(s, T, 300, ...hails(1));
+    s.tick(T + 100_000, report('V1', 'A2', 400, T + 100_000));
+    s.at(T + 110_000, { kind: 'tick', reports: [report('V1', 'A2', 300, T + 110_000)] }, ...hails(2));
+
+    expect(s.signals.map((x) => [x.id, x.vehicleId, x.waiting])).toEqual([['s1', 'V1', 1], ['s2', 'V1', 1]]);
+  });
 });
 
 describe('hailCoordinator: one run per vehicle (ADR-022, annotated 08-10-2026)', () => {

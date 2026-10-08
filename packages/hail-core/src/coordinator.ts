@@ -199,12 +199,12 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
   const commit = (h: Hail, report: VehicleReport, deadline: number | null) => {
     h.state = 'committed';
     h.wake = undefined;
-    const at = JSON.stringify([run(report), h.stopId]);
-    const was = live.get(at);
+    const place = JSON.stringify([run(report), h.stopId]);
+    const was = live.get(place);
     const signal: Signal = was
       ? { ...was, deadline: was.deadline === null || deadline === null ? null : Math.min(was.deadline, deadline), waiting: was.waiting + 1 }
       : { id: `s${++signalCount}`, vehicleId: report.vehicleId, stopId: h.stopId, deadline, waiting: 1 };
-    live.set(at, signal);
+    live.set(place, signal);
     note(h, 'committed', { deadline, signalId: signal.id }, report.vehicleId);
     signals.signal(signal);
   };
