@@ -915,9 +915,12 @@ describe('hailCoordinator: withdrawal and re-sending (#38)', () => {
     ['stale (ADR-037 decision 1)', [[20, 750, 10], [40, 600, 25], [60, 600, 25]]],
     ['not yet at its commit instant (ADR-037 decision 1)', [[40, 470, 40], [60, 370, 60]]],
     ['inside its stopping distance (ADR-003 Alt 3)', [[40, 700, 40], [60, 100, 60]]],
-    ['skipped at registration, though stopped within reach since (ADR-039 decisions 1 and 2)', [-80, -70, -50, -40, -20, 0, 20, 40, 60].map((t) => [t, t === -80 ? 400 : t === -70 ? 250 : 50, t])],
-  ])('keeps the hail on its bus when the nearer one is %s', (_, v2) => {
-    const s = service();
+    ['skipped at registration, though stopped within reach since (ADR-039 decisions 1 and 2)',
+      [[-80, 400, -80], [-70, 250, -70], [-50, 50, -50], [-40, 50, -40], [-20, 50, -20], [0, 50, 0], [20, 50, 20], [40, 50, 40], [60, 50, 60]]],
+    // P 100 m before S, so the reach is 150 m.
+    ["stopped beyond its previous stop's reach (ADR-037's [DECIDED:05-10-2026])", [[40, 300, 40], [60, 300, 60]], { ...road, stops: new Map([['S', S], ['P', before(100)]]) }],
+  ] as [string, number[][], ServiceDay?][])('keeps the hail on its bus when the nearer one is %s', (_, v2, timetable) => {
+    const s = service(timetable);
     const tick = (t: number, ...reports: VehicleReport[]) =>
       s.tick(T + t * 1_000, ...reports, ...v2.filter(([at]) => at === t).map(([, m, fix]) => report('V2', 'A2', m, T + fix * 1_000)));
     tick(-80);
