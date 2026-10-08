@@ -421,6 +421,32 @@ describe('hailCoordinator: the deadline and a stale prediction', () => {
     expect(s.signals).toEqual([]);
   });
 
+  it("abandons at a deadline wakeup only on the run the hail last resolved to, and waits for a new stale pick's own deadline (ADR-023, decided 07-10-2026; ADR-039, annotated 08-10-2026)", () => {
+    const s = service();
+    // V1 reports last at T + 1 s, 981.6 m out at 10 m/s: stale from T + 31 s, its extrapolated deadline is T + 91.6 s,
+    // and the 90 s cutoff passes it over from T + 91 s. V2 reports last at T + 60 s, 875.6 m out at 10 m/s: stale at
+    // T + 91.6 s, with its own deadline at T + 140 s, inside its 90 s.
+    const a = (t: number) => v1(t, 981.6 - (t - T - 1_000) / 100);
+    const b = (t: number) => report('V2', 'A2', 875.6 - (t - T - 60_000) / 100, t);
+    s.at(T - 60_000, register, start);
+    s.at(T - 30_000);
+    s.tick(T - 19_000, a(T - 19_000));
+    s.tick(T + 1_000, a(T + 1_000));
+    s.tick(T + 50_000, a(T + 1_000), b(T + 50_000));
+    s.tick(T + 60_000, a(T + 1_000), b(T + 60_000));
+    const deadlines = () => s.scheduled.filter(({ event }) => event.kind === 'wakeup' && event.purpose === 'deadline').map((w) => w.at);
+    expect(deadlines()).toHaveLength(1);
+    expect(deadlines()[0]).toBeCloseTo(T + 91_604.4, 0);
+
+    s.at(deadlines()[0]);
+    expect(s.kinds()).toEqual(['registered', 'present', 'eligible']);
+    expect(deadlines()).toHaveLength(2);
+    expect(deadlines()[1]).toBeCloseTo(T + 140_004.4, 0);
+
+    s.at(deadlines()[1]);
+    expect(s.records.at(-1)).toMatchObject({ at: deadlines()[1], kind: 'abandoned', vehicleId: 'V2', payload: { reason: 'stale' } });
+  });
+
   it('abandons a hail that becomes eligible on a stale prediction past its extrapolated deadline (ADR-023, decided 07-10-2026)', () => {
     const s = service();
     for (const t of [T - 20_000, T]) s.tick(t, v1(t));

@@ -157,9 +157,11 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
       const vehicleId = p.report.vehicleId;
       // A stale prediction is no current estimate, so the hail never commits on it before the deadline, and waits for
       // the vehicle's next report until the deadline extrapolated from it (ADR-023, ADR-037 decision 1). Still stale
-      // then, or already past it, the hail is abandoned (ADR-023, decided 07-10-2026).
+      // then, or already past it, the hail is abandoned (ADR-023, decided 07-10-2026). A deadline wakeup set for the
+      // run the hail last resolved to ends it only on that run: a new pick, as when the 90 s cutoff passes the old one
+      // over, waits for its own deadline (ADR-039, annotated 08-10-2026).
       if (p.stale) {
-        if (purpose === 'deadline' || (p.speedMps > 0 && !d)) return end(h, 'abandoned', { reason: 'stale' }, vehicleId);
+        if ((purpose === 'deadline' && resolved) || (p.speedMps > 0 && !d)) return end(h, 'abandoned', { reason: 'stale' }, vehicleId);
         if (d) wake(h, 'deadline', d.deadline);
         return;
       }
