@@ -33,7 +33,8 @@ export function inputs(snaps: readonly { at: number; reports: VehicleReport[] }[
 
 // One fresh coordinator applies every input through submit(), as the live adapters do (ADR-028 decision 1). Before each
 // input, every wakeup due by then fires with the clock at its own t, as the live timer fires it to within 100 ms, so a
-// replay never runs a commit late by the gap to the next snapshot. Signals go nowhere: the log is what T7 compares.
+// replay never runs a commit late by the gap to the next snapshot. The replay ends at its last input, so a wakeup due
+// after it never fires. Signals go nowhere: the log is what T7 compares.
 // Each line is JSON.stringify of the record, as main.ts writes it, keys in ADR-017's order.
 export function replay(timetable: ServiceDay, timed: readonly Timed[]): string[] {
   let now = -Infinity;
