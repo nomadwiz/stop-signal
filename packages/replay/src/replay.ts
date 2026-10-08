@@ -61,6 +61,19 @@ export function replay(timetable: ServiceDay, timed: readonly Timed[]): string[]
   return log;
 }
 
+// A path under packages/replay/.
+export const here = (path: string) => fileURLToPath(new URL(`../${path}`, import.meta.url));
+
+// The fixture window (ADR-030): its service day, and each snapshot decoded once, as C7 would hand it to the loop: the
+// whole decoded snapshot is one tick.
+export async function fixtures(): Promise<{ index: ServiceDay; snaps: { at: number; reports: VehicleReport[] }[] }> {
+  const manifest = JSON.parse(readFileSync(here('fixtures/manifest.json'), 'utf8'));
+  const index = await loadServiceDay(here('fixtures/gtfs.zip'), manifest.day);
+  const snaps = [];
+  for await (const { at, feed } of snapshots(here('fixtures/snapshots'), manifest.from, manifest.to)) snaps.push({ at, reports: vehicleReports(feed, index) });
+  return { index, snaps };
+}
+
 // The logs that fail T7: each replayed log that differs from, or has no, expected log, then each expected log with no
 // scenario left to replay it (stale). Both maps are keyed by the log's path under expected/.
 export function failing(replayed: ReadonlyMap<string, string>, expected: ReadonlyMap<string, string>): string[] {
@@ -69,13 +82,8 @@ export function failing(replayed: ReadonlyMap<string, string>, expected: Readonl
 
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const write = process.argv.includes('--write');
-  const here = (path: string) => fileURLToPath(new URL(`../${path}`, import.meta.url));
   const started = performance.now();
-  const manifest = JSON.parse(readFileSync(here('fixtures/manifest.json'), 'utf8'));
-  const index = await loadServiceDay(here('fixtures/gtfs.zip'), manifest.day);
-  // Each snapshot is decoded once, as C7 would hand it to the loop: the whole decoded snapshot is one tick.
-  const snaps = [];
-  for await (const { at, feed } of snapshots(here('fixtures/snapshots'), manifest.from, manifest.to)) snaps.push({ at, reports: vehicleReports(feed, index) });
+  const { index, snaps } = await fixtures();
   const loaded = performance.now();
 
   const scenarios = readdirSync(here('scenarios'), { recursive: true, encoding: 'utf8' }).filter((f) => f.endsWith('.json')).sort();
