@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ServiceDay } from '../../hail-core/src/coordinator.ts';
 import type { HailEvent } from '../../hail-core/src/events.ts';
 import type { VehicleReport } from '../../hail-core/src/resolve.ts';
-import { inputs, replay } from './replay.ts';
+import { failing, inputs, replay } from './replay.ts';
 
 const T = 1_790_000_000_000;
 const DAY = '20261003';
@@ -59,5 +59,21 @@ describe('replay', () => {
     const committed = JSON.parse(log.find((line) => line.includes('"committed"'))!);
     expect(committed).toMatchObject({ kind: 'committed', vehicleId: 'V1' });
     expect(committed.at).toBeCloseTo(T + 72_444.4, 0);
+  });
+});
+
+describe('failing', () => {
+  const expected = new Map([['a.jsonl', 'x\n'], ['b.jsonl', 'y\n']]);
+  it('passes when every replayed log equals its expected log', () => {
+    expect(failing(new Map(expected), expected)).toEqual([]);
+  });
+  it('fails a replayed log that differs from its expected log', () => {
+    expect(failing(new Map([['a.jsonl', 'x\n'], ['b.jsonl', 'z\n']]), expected)).toEqual(['b.jsonl']);
+  });
+  it('fails a replayed log with no expected log', () => {
+    expect(failing(new Map([...expected, ['c.jsonl', 'w\n']]), expected)).toEqual(['c.jsonl']);
+  });
+  it('fails a stale expected log with no scenario', () => {
+    expect(failing(new Map([['a.jsonl', 'x\n']]), expected)).toEqual(['b.jsonl']);
   });
 });
