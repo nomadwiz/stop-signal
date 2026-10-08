@@ -314,6 +314,7 @@ describe('hailCoordinator: a vehicle missing from the snapshot or silent (ADR-02
     const parked = (t: number) => v1(t, 300);
     for (const t of [T - 100_000, T - 80_000]) s.tick(t, parked(t));
     s.at(T - 60_000, register, start);
+    for (const t of [T - 60_000, T - 40_000]) s.tick(t, parked(T - 80_000));
     // V2 runs route R at 10 m/s, 800 m out at T: its commit instant is T + 42.4 s.
     for (const t of [T - 20_000, T, T + 10_000]) s.tick(t, parked(T - 80_000), v2(t, 800));
     // At T + 10 s, its fix exactly 90 s old, V1 still holds the hail: no commit is scheduled on V2.
@@ -336,6 +337,7 @@ describe('hailCoordinator: input it cannot use', () => {
 
     expect(() => {
       s.at(T, { ...register, stopId: 'nowhere' }, { ...start, stopId: 'nowhere' });
+      s.tick(T + 20_000, v1(T + 20_000));
       s.at(T + 30_000);
       s.tick(T + 35_000, v1(T + 35_000));
     }).not.toThrow();
@@ -393,6 +395,8 @@ describe('hailCoordinator: the deadline and a stale prediction', () => {
     const s = service();
     s.at(T - 40_000, register, start);
     for (const t of [T - 20_000, T]) s.tick(t, v1(t));
+    // The feed stays live, re-serving V1's fix from T.
+    for (const t of [T + 20_000, T + 40_000]) s.tick(t, v1(T));
 
     // At T + 42.4 s V1's latest report is 42 s old.
     s.at(T + 42_445);
@@ -407,8 +411,11 @@ describe('hailCoordinator: the deadline and a stale prediction', () => {
     const s = service();
     s.at(T - 40_000, register, start);
     for (const t of [T - 20_000, T]) s.tick(t, v1(t));
+    // The feed stays live, re-serving V1's fix from T.
+    for (const t of [T + 20_000, T + 40_000]) s.tick(t, v1(T));
 
     s.at(T + 42_445);
+    s.tick(T + 60_000, v1(T));
     // The deadline wakeup, at the deadline extrapolated from the stale report, T + 72.4 s.
     const { at: deadline } = s.scheduled.findLast(({ event }) => event.kind === 'wakeup' && event.purpose === 'deadline')!;
     expect(deadline).toBeCloseTo(T + 72_444.4, 0);
@@ -430,26 +437,28 @@ describe('hailCoordinator: the deadline and a stale prediction', () => {
     const b = (t: number) => report('V2', 'A2', 875.6 - (t - T - 60_000) / 100, t);
     s.at(T - 60_000, register, start);
     s.at(T - 30_000);
+    // Each snapshot re-serves the vehicles' latest fixes, so the feed stays live.
     s.tick(T - 19_000, a(T - 19_000));
-    s.tick(T + 1_000, a(T + 1_000));
+    for (const t of [T + 1_000, T + 21_000, T + 41_000]) s.tick(t, a(T + 1_000));
     s.tick(T + 50_000, a(T + 1_000), b(T + 50_000));
-    s.tick(T + 60_000, a(T + 1_000), b(T + 60_000));
-    const deadlines = () => s.scheduled.filter(({ event }) => event.kind === 'wakeup' && event.purpose === 'deadline').map((w) => w.at);
-    expect(deadlines()).toHaveLength(1);
-    expect(deadlines()[0]).toBeCloseTo(T + 91_604.4, 0);
+    for (const t of [T + 60_000, T + 80_000]) s.tick(t, a(T + 1_000), b(T + 60_000));
+    const deadline = () => s.scheduled.findLast(({ event }) => event.kind === 'wakeup' && event.purpose === 'deadline')!.at;
+    expect(deadline()).toBeCloseTo(T + 91_604.4, 0);
 
-    s.at(deadlines()[0]);
+    s.at(deadline());
     expect(s.kinds()).toEqual(['registered', 'present', 'eligible']);
-    expect(deadlines()).toHaveLength(2);
-    expect(deadlines()[1]).toBeCloseTo(T + 140_004.4, 0);
+    expect(deadline()).toBeCloseTo(T + 140_004.4, 0);
 
-    s.at(deadlines()[1]);
-    expect(s.records.at(-1)).toMatchObject({ at: deadlines()[1], kind: 'abandoned', vehicleId: 'V2', payload: { reason: 'stale' } });
+    for (const t of [T + 100_000, T + 120_000]) s.tick(t, a(T + 1_000), b(T + 60_000));
+    s.at(deadline());
+    expect(s.records.at(-1)).toMatchObject({ at: deadline(), kind: 'abandoned', vehicleId: 'V2', payload: { reason: 'stale' } });
   });
 
   it("waits, rather than abandons, on a stale pick it never resolved to that is past its extrapolated deadline, and lets the vehicle's next report decide (ADR-039, annotated 08-10-2026)", () => {
     const s = service();
     for (const t of [T - 20_000, T]) s.tick(t, v1(t));
+    // The feed stays live, re-serving V1's fix from T.
+    for (const t of [T + 20_000, T + 40_000, T + 60_000]) s.tick(t, v1(T));
 
     // At T + 75 s V1 is extrapolated to 50 m out, on a report 75 s old, inside its stopping distance.
     s.at(T + 45_000, register, start);
@@ -478,8 +487,9 @@ describe('hailCoordinator: the deadline and a stale prediction', () => {
     s.tick(T - 19_000, a(T - 19_000));
     s.tick(T + 1_000, a(T + 1_000));
     s.tick(T + 30_000, a(T + 1_000), b(T + 30_000));
-    s.tick(T + 40_000, a(T + 1_000), b(T + 40_000));
-    const [deadline] = s.scheduled.filter(({ event }) => event.kind === 'wakeup' && event.purpose === 'deadline').map((w) => w.at);
+    // Each snapshot re-serves the vehicles' latest fixes, so the feed stays live.
+    for (const t of [T + 40_000, T + 60_000, T + 80_000]) s.tick(t, a(T + 1_000), b(T + 40_000));
+    const deadline = s.scheduled.findLast(({ event }) => event.kind === 'wakeup' && event.purpose === 'deadline')!.at;
     expect(deadline).toBeCloseTo(T + 91_604.4, 0);
 
     s.at(deadline);
@@ -528,6 +538,7 @@ describe("hailCoordinator: a stopped vehicle (ADR-037's [DECIDED:05-10-2026])", 
   it('waits on a stale stopped vehicle within that reach, and commits on its next fresh report', () => {
     const s = service();
     for (const t of [T - 60_000, T - 40_000]) s.tick(t, v1(t, 380));
+    s.tick(T - 20_000, v1(T - 40_000, 380));
 
     // At T, when the hail becomes eligible, V1's latest report is 40 s old.
     s.at(T - 30_000, register, start);
@@ -624,6 +635,7 @@ describe('hailCoordinator: a candidate past its deadline goes to the next bus (A
     // resolves to it, stale. At T + 5 s V1 reports 100 m out at 15.6 m/s, inside its 165 m stopping distance.
     for (const t of [T - 60_000, T - 40_000]) s.tick(t, v1(t, 400 - (t - T) / 100));
     s.at(T - 30_000, register, start);
+    s.tick(T - 20_000, v1(T - 40_000, 800));
     s.at(T);
     s.tick(T + 5_000, v1(T + 5_000, 100));
 
@@ -766,13 +778,16 @@ const states = {
     trail: ['registered', 'present', 'eligible', 'unattended'],
     reach: (s: Service) => (states.eligible.reach(s), s.at(T + 20_000, lost), T + 40_000),
   },
-  // Waiting on its deadline wakeup at T + 72.4 s: V1's last report, at T, was stale at the commit wakeup.
+  // Waiting on its deadline wakeup at T + 72.4 s: V1's last report, at T, was stale at the commit wakeup. Each later
+  // snapshot re-serves it, so the feed stays live until T + 75 s.
   'eligible, stale': {
     trail: ['registered', 'present', 'eligible'],
     reach: (s: Service) => {
       s.at(T - 60_000, register, start);
       for (const t of [T - 20_000, T]) s.tick(t, v1(t));
+      for (const t of [T + 20_000, T + 40_000]) s.tick(t, v1(T));
       s.at(T + 42_445);
+      s.tick(T + 45_000, v1(T));
       return T + 50_000;
     },
   },
@@ -795,7 +810,7 @@ const states = {
   },
   abandoned: {
     trail: ['registered', 'present', 'eligible', 'abandoned stale'],
-    reach: (s: Service) => (states['eligible, stale'].reach(s), s.at(T + 72_445), T + 80_000),
+    reach: (s: Service) => (states['eligible, stale'].reach(s), s.at(T + 72_445), s.tick(T + 75_000, v1(T)), T + 80_000),
   },
 };
 type State = keyof typeof states;
@@ -870,7 +885,7 @@ const table: Record<keyof typeof events, Record<State, Row>> = {
   'presence-start': {
     none: [[], 'presence is held for a later register: ADR-040, annotated 07-10-2026', [(s, e) => s.at(e + 1_000, register), ['registered', 'present']]],
     registered: [['present'], 'FR4; ADR-041 decision 1'],
-    left: [['returned'], 'a fresh dwell and the skip on return: ADR-040 decision 2, decided 07-10-2026', [(s, e) => s.at(e + 30_000), ['eligible']]],
+    left: [['returned'], 'a fresh dwell and the skip on return: ADR-040 decision 2, decided 07-10-2026', [(s, e) => (s.tick(e, v1(T)), s.tick(e + 20_000, v1(T)), s.at(e + 30_000)), ['eligible']]],
     present: [[], SAME_PRESENCE, [(s) => s.at(T + 30_000), ['eligible']]],
     'present, unattended': RECONNECT,
     eligible: [[], SAME_PRESENCE],
@@ -879,7 +894,7 @@ const table: Record<keyof typeof events, Record<State, Row>> = {
     committed: [[], SAME_PRESENCE],
     'committed, unattended': RECONNECT,
     withdrawn: [[], `${ENDED}; ${SAME_PRESENCE}`, [(s, e) => s.at(e + 1_000, register), ['registered', 'present', 'eligible']]],
-    spent: [[], 'returning fires nothing: ADR-010 decision 1', [(s, e) => s.at(e + 1_000, register), ['registered', 'present']]],
+    spent: [[], 'returning fires nothing: ADR-010 decision 1', [(s, e) => (s.tick(e, v1(e)), s.at(e + 1_000, register)), ['registered', 'present']]],
     abandoned: [[], `${ENDED}; ${SAME_PRESENCE}`],
   },
   'presence-end': {
@@ -900,7 +915,7 @@ const table: Record<keyof typeof events, Record<State, Row>> = {
   'connection-lost': {
     none: [[], NO_HAIL],
     registered: [[], 'Unattended applies at the stop only: ADR-010, annotated 07-10-2026'],
-    left: [[], 'stays Registered, uncommitted: ADR-040 decision 5', [(s) => s.at(T + 80_000), []]],
+    left: [[], 'stays Registered, uncommitted: ADR-040 decision 5', [(s) => [T + 20_000, T + 40_000, T + 60_000, T + 80_000].forEach((t) => s.tick(t, v1(t))), []]],
     present: [['unattended'], 'ADR-010 decision 3; ADR-040 decision 5'],
     'present, unattended': [[], ALREADY_UNATTENDED],
     eligible: [['unattended'], 'ADR-010 decision 3', [(s) => s.at(T + 42_445), ['committed']]],
