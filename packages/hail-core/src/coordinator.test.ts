@@ -210,7 +210,7 @@ describe('hailCoordinator: the commit', () => {
     s.at(T + 42_445);
     expect(s.records.at(-1)).toMatchObject({ at: T + 42_445, kind: 'committed', hailId: 'h1', vehicleId: 'V1', payload: { signalId: 's1' } });
     expect(s.records.at(-1)!.payload.deadline).toBeCloseTo(T + 72_444.4, 0);
-    expect(s.signals).toEqual([{ id: 's1', vehicleId: 'V1', stopId: 'S' }]);
+    expect(s.signals).toMatchObject([{ id: 's1', vehicleId: 'V1', stopId: 'S', waiting: 1 }]);
   });
 
   it('moves the commit when a report moves the deadline, and the wakeup it replaced commits nothing', () => {
@@ -267,6 +267,95 @@ describe('hailCoordinator: the commit', () => {
 
     expect(s.records.at(-1)).toMatchObject({ kind: 'committed', vehicleId: 'V1' });
     expect(s.records.at(-1)!.payload.deadline).toBeCloseTo(T + 22_444.4, 0);
+  });
+});
+
+// S4: hails committed on one vehicle run at one stop collapse to one signal at the earliest of their deadlines (#35, FR8;
+// product.md §4 step 6). Each passenger has been at S since T − 60 s, so a hail registered then is eligible at once, and
+// commits at once when the tick before it puts V1 within one feed interval of its deadline.
+const passenger = (n: number) => `passenger-${n}`;
+const arrived = (...ns: number[]): HailEvent[] => ns.map((n) => ({ ...start, handle: passenger(n) }));
+const hails = (...ns: number[]): HailEvent[] => ns.map((n) => ({ ...register, handle: passenger(n) }));
+const moves = (s: Service, t: number, m: number, ...events: HailEvent[]) => s.at(t, { kind: 'tick', reports: [report('V1', 'A1', m, t)] }, ...events);
+const committed = (s: Service) => s.records.filter((r) => r.kind === 'committed');
+
+describe('hailCoordinator: aggregation (#35)', () => {
+  it('collapses five hails with different deadlines to one signal at the earliest, counting all five waiting', () => {
+    const s = service();
+    s.at(T - 60_000, ...arrived(1, 2, 3, 4, 5));
+    moves(s, T - 10_000, 400);
+    // Each tick changes V1's speed, so each hail commits on its own deadline: 10 m/s 300 m out, T + 22.4 s; 8 m/s
+    // 260 m out, T + 31.1 s; 12 m/s 200 m out, T + 18.0 s; 10 m/s 150 m out, T + 22.4 s; 7.5 m/s 135 m out, T + 28.8 s.
+    moves(s, T, 300, ...hails(1));
+    moves(s, T + 5_000, 260, ...hails(2));
+    moves(s, T + 10_000, 200, ...hails(3));
+    moves(s, T + 15_000, 150, ...hails(4));
+    moves(s, T + 17_000, 135, ...hails(5));
+
+    const deadlines = committed(s).map((r) => r.payload.deadline as number);
+    expect(deadlines.map((d) => Math.round((d - T) / 100) / 10)).toEqual([22.4, 31.1, 18, 22.4, 28.8]);
+    expect(committed(s).map((r) => r.payload.signalId)).toEqual(['s1', 's1', 's1', 's1', 's1']);
+    expect(s.signals.at(-1)).toEqual({
+      id: 's1', vehicleId: 'V1', tripId: 'A1', routeId: 'R', stopId: 'S', at: T, distanceM: expect.closeTo(135, 0), deadline: Math.min(...deadlines), waiting: 5,
+    });
+  });
+
+  it('moves the signal earlier when a later hail commits on a tighter deadline, and never later on a looser one', () => {
+    const s = service();
+    s.at(T - 60_000, ...arrived(1, 2, 3));
+    moves(s, T - 10_000, 400);
+    moves(s, T, 300, ...hails(1));
+    expect(s.signals).toEqual([{
+      id: 's1', vehicleId: 'V1', tripId: 'A1', routeId: 'R', stopId: 'S', at: T, distanceM: expect.closeTo(300, 0), deadline: expect.closeTo(T + 22_444, -1), waiting: 1,
+    }]);
+
+    // V1 speeds up to 12 m/s, 180 m out: its deadline comes forward to T + 16.3 s.
+    moves(s, T + 10_000, 180, ...hails(2));
+    // The signal keeps the instant it was first sent, and takes the distance at the latest join.
+    expect(s.signals.at(-1)).toEqual({
+      id: 's1', vehicleId: 'V1', tripId: 'A1', routeId: 'R', stopId: 'S', at: T, distanceM: expect.closeTo(180, 0), deadline: expect.closeTo(T + 16_333, -1), waiting: 2,
+    });
+
+    // V1 slows to 8 m/s, 140 m out: its deadline goes back to T + 26.1 s, and the signal keeps T + 16.3 s.
+    moves(s, T + 15_000, 140, ...hails(3));
+    expect(s.signals.at(-1)).toMatchObject({ id: 's1', deadline: expect.closeTo(T + 16_333, -1), waiting: 3 });
+  });
+
+  it('takes a stopped-vehicle commit, due at once with no deadline, as the earliest, and keeps it when a moving one joins', () => {
+    const s = service();
+    s.at(T - 60_000, ...arrived(1, 2, 3));
+    moves(s, T - 10_000, 400);
+    moves(s, T, 300, ...hails(1));
+    moves(s, T + 10_000, 300, ...hails(2));
+    // V1 moves off at 10 m/s, 200 m out: a deadline of T + 32.4 s.
+    moves(s, T + 20_000, 200, ...hails(3));
+
+    expect(committed(s).map((r) => r.payload.deadline === null)).toEqual([false, true, false]);
+    expect(committed(s)[2].payload.deadline).toBeCloseTo(T + 32_444, -1);
+    expect(s.signals.at(-1)).toMatchObject({ id: 's1', deadline: null, waiting: 3 });
+  });
+
+  it('gives a hail at another stop on the same vehicle run its own signal', () => {
+    const s = service({ ...road, tripsAtStop: new Map([['S', ['A1']], ['P', ['A1']]]) });
+    s.at(T - 60_000, ...arrived(1), { ...start, handle: passenger(2), stopId: 'P' });
+    moves(s, T - 10_000, 1_400);
+    moves(s, T, 1_300, ...hails(1), { ...register, handle: passenger(2), stopId: 'P' });
+    for (const t of [T + 20_000, T + 40_000, T + 60_000, T + 80_000, T + 100_000]) moves(s, t, 1_300 - (t - T) / 100);
+    s.at(T + 104_000);
+
+    expect(committed(s).map((r) => [r.hailId, r.payload.signalId])).toEqual([['h2', 's1'], ['h1', 's2']]);
+    expect(s.signals.map((x) => [x.id, x.stopId, x.waiting])).toEqual([['s1', 'P', 1], ['s2', 'S', 1]]);
+  });
+
+  it('gives a hail on the same vehicle\'s next run at the same stop its own signal (ADR-025)', () => {
+    const s = service();
+    s.at(T - 60_000, ...arrived(1, 2));
+    moves(s, T - 10_000, 400);
+    moves(s, T, 300, ...hails(1));
+    s.tick(T + 100_000, report('V1', 'A2', 400, T + 100_000));
+    s.at(T + 110_000, { kind: 'tick', reports: [report('V1', 'A2', 300, T + 110_000)] }, ...hails(2));
+
+    expect(s.signals.map((x) => [x.id, x.vehicleId, x.waiting])).toEqual([['s1', 'V1', 1], ['s2', 'V1', 1]]);
   });
 });
 
@@ -506,7 +595,7 @@ describe("hailCoordinator: a stopped vehicle (ADR-037's [DECIDED:05-10-2026])", 
 
     expect(timeline(s.records).at(-1)).toEqual(['committed', 0]);
     expect(s.records.at(-1)).toMatchObject({ vehicleId: 'V1', payload: { deadline: null, signalId: 's1' } });
-    expect(s.signals).toEqual([{ id: 's1', vehicleId: 'V1', stopId: 'S' }]);
+    expect(s.signals).toMatchObject([{ id: 's1', vehicleId: 'V1', stopId: 'S', waiting: 1 }]);
   });
 
   it('waits on a stopped vehicle beyond that reach', () => {
@@ -554,7 +643,7 @@ describe('hailCoordinator: a candidate past its deadline goes to the next bus (A
 
     expect(timeline(s.records)).toEqual([['registered', 0], ['skipped', 0], ['present', 0], ['eligible', 30], ['committed', 42.445]]);
     expect(s.records[1].payload).toEqual({ candidates: ['V1'] });
-    expect(s.signals).toEqual([{ id: 's1', vehicleId: 'V2', stopId: 'S' }]);
+    expect(s.signals).toMatchObject([{ id: 's1', vehicleId: 'V2', stopId: 'S', waiting: 1 }]);
   });
 
   it('skips neither a stopped candidate nor a stale one (decisions 4 and 5)', () => {
@@ -615,7 +704,7 @@ describe('hailCoordinator: a candidate past its deadline goes to the next bus (A
 
     expect(timeline(s.records)).toEqual([['registered', -60], ['present', -60], ['eligible', -30], ['skipped', 0], ['committed', 42.445]]);
     expect(s.records[3].payload).toEqual({ candidates: ['V1'] });
-    expect(s.signals).toEqual([{ id: 's1', vehicleId: 'V2', stopId: 'S' }]);
+    expect(s.signals).toMatchObject([{ id: 's1', vehicleId: 'V2', stopId: 'S', waiting: 1 }]);
   });
 
   it('counts a stale pick as resolved to, so its next fresh report inside its stopping distance abandons the hail (ADR-039, annotated 08-10-2026)', () => {
@@ -647,7 +736,7 @@ describe('hailCoordinator: a candidate past its deadline goes to the next bus (A
       ['registered', -60, 'h1'], ['present', -60, 'h1'], ['eligible', -30, 'h1'], ['abandoned', 40, 'h1'],
       ['registered', 40, 'h2'], ['skipped', 40, 'h2'], ['present', 40, 'h2'], ['eligible', 40, 'h2'], ['committed', 72.445, 'h2'],
     ]);
-    expect(s.signals).toEqual([{ id: 's1', vehicleId: 'V2', stopId: 'S' }]);
+    expect(s.signals).toMatchObject([{ id: 's1', vehicleId: 'V2', stopId: 'S', waiting: 1 }]);
   });
 });
 
@@ -981,8 +1070,8 @@ const table: Record<keyof typeof events, Record<State, Row>> = {
     eligible: [['committed'], 'ADR-037 decision 1'],
     'eligible, unattended': [['committed'], 'an uncommitted hail still commits: ADR-010 decision 3'],
     'eligible, stale': [[], STALE_WAKEUP],
-    committed: [[], `one signal per hail until #35; ${STALE_WAKEUP}`],
-    'committed, unattended': [[], `one signal per hail until #35; ${STALE_WAKEUP}`],
+    committed: [[], `a hail commits once; ${STALE_WAKEUP}`],
+    'committed, unattended': [[], `a hail commits once; ${STALE_WAKEUP}`],
     withdrawn: [[], ENDED],
     spent: [[], ENDED],
     abandoned: [[], ENDED],
@@ -1025,7 +1114,7 @@ describe('T2: every lifecycle state against every event (#33)', () => {
         it(`${state} writes [${written.join(', ')}]: ${rule}`, () => {
           const s = service();
           const e = states[state as State].reach(s);
-          // Every commit hands SignalPort one signal (#32); the harness throws on a retraction, which is #38's.
+          // Every commit hands SignalPort its signal, new or joined (#32, #35); the harness throws on a retraction, which is #38's.
           const step = (act: (s: Service, e: number) => void) => {
             const [records, signals] = [s.records.length, s.signals.length];
             act(s, e);

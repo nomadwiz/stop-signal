@@ -14,10 +14,10 @@
 {"seq":14,"at":1790971272766,"kind":"eligible","hailId":"h4","vehicleId":null,"payload":{}}
 {"seq":15,"at":1790971272766,"kind":"eligible","hailId":"h5","vehicleId":null,"payload":{}}
 {"seq":16,"at":1790971444699.1294,"kind":"committed","hailId":"h1","vehicleId":"47280","payload":{"deadline":1790971474699.1294,"signalId":"s1"}}
-{"seq":17,"at":1790971444699.1294,"kind":"committed","hailId":"h2","vehicleId":"47280","payload":{"deadline":1790971474699.1294,"signalId":"s2"}}
-{"seq":18,"at":1790971444699.1294,"kind":"committed","hailId":"h3","vehicleId":"47280","payload":{"deadline":1790971474699.1294,"signalId":"s3"}}
-{"seq":19,"at":1790971444699.1294,"kind":"committed","hailId":"h4","vehicleId":"47280","payload":{"deadline":1790971474699.1294,"signalId":"s4"}}
-{"seq":20,"at":1790971444699.1294,"kind":"committed","hailId":"h5","vehicleId":"47280","payload":{"deadline":1790971474699.1294,"signalId":"s5"}}
+{"seq":17,"at":1790971444699.1294,"kind":"committed","hailId":"h2","vehicleId":"47280","payload":{"deadline":1790971474699.1294,"signalId":"s1"}}
+{"seq":18,"at":1790971444699.1294,"kind":"committed","hailId":"h3","vehicleId":"47280","payload":{"deadline":1790971474699.1294,"signalId":"s1"}}
+{"seq":19,"at":1790971444699.1294,"kind":"committed","hailId":"h4","vehicleId":"47280","payload":{"deadline":1790971474699.1294,"signalId":"s1"}}
+{"seq":20,"at":1790971444699.1294,"kind":"committed","hailId":"h5","vehicleId":"47280","payload":{"deadline":1790971474699.1294,"signalId":"s1"}}
 {"seq":21,"at":1790971542766,"kind":"spent","hailId":"h1","vehicleId":null,"payload":{}}
 {"seq":22,"at":1790971542766,"kind":"spent","hailId":"h2","vehicleId":null,"payload":{}}
 {"seq":23,"at":1790971542766,"kind":"spent","hailId":"h3","vehicleId":null,"payload":{}}
