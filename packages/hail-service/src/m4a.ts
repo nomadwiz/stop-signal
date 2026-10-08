@@ -9,10 +9,11 @@
 //   `| Group | Scenarios | With no commit | Approaches | M4a |` by each file's group (ADR-034 decision 2), then every
 //   scenario with an approach whose M4a is not 1. A scenario with no commit has no approach, so no M4a; M1 counts its
 //   calls as none.
-import { readdirSync, readFileSync, realpathSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { DecisionRecord } from '../../hail-core/src/trace.ts';
 import type { Group } from './m1.ts';
+import { replayRuns } from './replay-runs.ts';
 import type { Scenario } from './scenarios.ts';
 
 // Signals per approach in one decision log, in the order each approach first commits.
@@ -57,11 +58,7 @@ export function m4aByGroup(built: readonly Scenario[], logs: readonly (readonly 
 }
 
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const replay = (path: string) => fileURLToPath(new URL(`../../replay/${path}`, import.meta.url));
-  for (const d of readdirSync(replay('scenarios')).sort((a, b) => Number(b.slice(1)) - Number(a.slice(1)))) {
-    const files = readdirSync(replay(`scenarios/${d}`)).filter((f) => f.endsWith('-n5.json')).sort();
-    const built: Scenario[] = files.map((f) => JSON.parse(readFileSync(replay(`scenarios/${d}/${f}`), 'utf8')));
-    const logs = files.map((f) => readFileSync(replay(`expected/${d}/${f.replace(/\.json$/, '.jsonl')}`), 'utf8').split('\n').filter(Boolean));
+  for (const { d, files, built, logs } of replayRuns('-n5.json')) {
     const off = logs.map(m4a).flatMap((c, i) => (c.some((n) => n !== 1) ? [`${d}/${files[i]}: ${c.join(', ')}`] : []));
     console.log(`\nD = ${d.slice(1)} s, ${files.length} scenarios at N = 5\n\n| Group | Scenarios | With no commit | Approaches | M4a |\n| --- | --- | --- | --- | --- |`);
     for (const [group, { scenarios, uncommitted, approaches: a }] of Object.entries(m4aByGroup(built, logs))) {
