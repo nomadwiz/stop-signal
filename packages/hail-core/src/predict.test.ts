@@ -136,6 +136,17 @@ describe('predict', () => {
     expect(distanceM).toBeCloseTo(900, 6);
   });
 
+  it('measures each stop on a shape it has measured before afresh, and each shape on its own', () => {
+    const shape = [at(0), at(2_000)];
+    const previous = { ...at(0), at: 0 };
+    const latest = { ...at(200), at: 20_000 };
+
+    expect(predict(shape, at(1_000), previous, latest, 20_000).distanceM).toBeCloseTo(800, 6);
+    expect(predict(shape, at(1_500), previous, latest, 20_000).distanceM).toBeCloseTo(1_300, 6);
+    expect(predict([at(100), at(2_000)], at(1_000), previous, latest, 20_000).distanceM).toBeCloseTo(800, 6);
+    expect(predict(shape, at(1_000), previous, latest, 20_000).distanceM).toBeCloseTo(800, 6);
+  });
+
   it('refuses two reports that are not in time order, since no speed follows from them', () => {
     const shape = [at(0), at(2_000)];
     const report = { ...at(300), at: 20_000 };
