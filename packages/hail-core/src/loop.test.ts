@@ -116,6 +116,21 @@ describe('scheduler', () => {
     expect(fired).toEqual(['wakeup', 'tick']);
   });
 
+  // ADR-002: in replay the loop fast-forwards, so the replay sets the clock to each wakeup's own t before waking it.
+  it('says when the earliest wakeup not yet enqueued falls, and Infinity when none is held', () => {
+    let now = 0;
+    const wakeups = scheduler({ now: () => now }, eventLoop<string>(() => {}));
+    expect(wakeups.next()).toBe(Infinity);
+    wakeups.at(300, 'later');
+    wakeups.at(100, 'first');
+    expect(wakeups.next()).toBe(100);
+
+    now = 100;
+    wakeups.wake();
+
+    expect(wakeups.next()).toBe(300);
+  });
+
   it('refuses a wakeup whose time is not a number, which no Clock reading could ever reach', () => {
     const wakeups = scheduler({ now: () => 0 }, eventLoop<string>(() => {}));
 

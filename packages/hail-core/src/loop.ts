@@ -44,6 +44,9 @@ export function scheduler<E>(clock: Clock, enqueue: (...events: E[]) => void) {
       pending.push({ at, event });
     },
     wake,
+    // When the earliest wakeup still held is due, Infinity when none is: replay sets the clock to it and wakes, so each
+    // wakeup fires at its own t, as the live timer fires it within WAKE_INTERVAL_MS (ADR-002, ADR-028 decision 1).
+    next: (): number => Math.min(...pending.map((w) => w.at)),
     // ponytail: ADR-028's form. A due wakeup that throws stops submit before the event is enqueued; the throw
     // reaches the caller, and the event is gone. Enqueue both in one call if a caller ever needs the event kept.
     submit(event: E): void {
