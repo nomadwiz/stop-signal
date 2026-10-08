@@ -32,7 +32,8 @@ interface Hail {
   unattended: boolean;
   // The vehicle runs this hail passed over for being too close to stop, never resolved to again (ADR-039 decision 2).
   skipped: Set<string>;
-  // The run the hail last resolved to: its last pick, stale or fresh (ADR-039, annotated 08-10-2026).
+  // The run the hail last resolved to: its last pick, stale or fresh, except a stale pick already inside its stopping
+  // distance, which the hail waits on without resolving to it (ADR-039, annotated 08-10-2026).
   resolvedTo?: string;
   wake?: { at: number; purpose: Purpose };
 }
