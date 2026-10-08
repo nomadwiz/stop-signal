@@ -1,12 +1,13 @@
 // C2: runs each hail through its lifecycle state machine, from register to commit (#32, FR7, FR13; Milestone 2's
 // Figure 5.4), and C5's watchdog, which ends every live hail on a stale feed (#41, FR14). One function applies every
 // event the loop hands it, in queue order (ADR-002), and writes exactly one decision record per transition (ADR-017).
+// S5 (#38, FR12): a signal is retracted when its last live hail leaves it, and a changed resolution re-signals.
 import type { Clock } from './clock.ts';
 import { signalDeadline } from './deadline.ts';
 import type { HailEvent } from './events.ts';
 import { FEED_INTERVAL_MS, predict, type Point } from './predict.ts';
 import { CALL_RADIUS_M, callingAt, type Timetable, type VehicleReport } from './resolve.ts';
-import type { Signal, SignalPort } from './signal.ts';
+import type { Signal, SignalPort, WithdrawalReason } from './signal.ts';
 import type { Json, recorder } from './trace.ts';
 
 // The service day the coordinator resolves against. hail-service's StaticIndex satisfies it.
@@ -35,6 +36,8 @@ interface Hail {
   // The run the hail last resolved to: its last pick, stale or fresh, except a stale pick already inside its stopping
   // distance, which the hail waits on without resolving to it (ADR-039, annotated 08-10-2026).
   resolvedTo?: string;
+  // The live signal a committed hail is on, by its key in live.
+  place?: string;
   wake?: { at: number; purpose: Purpose };
 }
 type Purpose = Extract<HailEvent, { kind: 'wakeup'; hailId: string }>['purpose'];
@@ -87,7 +90,8 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
     hails.delete(h.id);
   };
   // A stale feed ends the hail in cannot hail, naming the vehicle it last resolved to, if any (ADR-017, annotated
-  // 09-10-2026). A committed hail's signal stays on the console until #38 retracts it (ADR-038, annotated 09-10-2026).
+  // 09-10-2026). ADR-038's annotation of 09-10-2026 has #38 retract a committed hail's signal here, but the reason codes
+  // its [DECIDED:09-10-2026] fixes, left, cancelled and moved, name no stale feed, so the signal stays until one is chosen.
   const abandonOnFeed = (h: Hail) => end(h, 'abandoned', { reason: 'feed' }, h.resolvedTo ? JSON.parse(h.resolvedTo)[0] : null);
   const wake = (h: Hail, purpose: Purpose, at: number) => {
     if (h.wake?.at === at && h.wake.purpose === purpose) return;
@@ -113,7 +117,8 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
   // The runs of the hail's route that call at its stop and have not passed it, nearest first (ADR-036), each with S2's
   // prediction at now. A run with one fix has no speed yet, a silent one is passed over, and an unknown stop has no
   // candidates.
-  // ponytail: scans every run per eligible hail per event; index the runs by route if the live feed makes this slow.
+  // ponytail: scans every run per eligible hail per event, and per committed hail per tick (#38), which grows with the
+  // committed hails a service day keeps until #61 ends them; index the runs by route if the live feed makes this slow.
   const calling = (h: Hail, now: number) => {
     const stop = timetable.stops.get(h.stopId);
     if (!stop) return [];
@@ -200,8 +205,8 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
   };
   // C4, service-wide: a hail committed on a vehicle run at a stop joins that run's live signal there, or starts one (S4,
   // FR8). The signal takes the earliest of their deadlines, not the first or the last, and null, due at once, is
-  // earliest of all (product.md §4 step 6). Committed is Delivered: re-resolving and retracting are #38's.
-  // ponytail: a signal stays here until #38 retracts it, so this holds every signal the service day sends.
+  // earliest of all (product.md §4 step 6). Committed is Delivered.
+  // ponytail: a signal stays here until retracted, so one whose hails a stale feed abandons is never dropped.
   const live = new Map<string, Signal>();
   // The signal keeps when it was first sent, and takes the predicted distance at its latest commit or join (ADR-038,
   // decided 09-10-2026). A calling report always names its trip (callingAt).
@@ -214,8 +219,34 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
       ? { ...was, distanceM, deadline: was.deadline === null || deadline === null ? null : Math.min(was.deadline, deadline), waiting: was.waiting + 1 }
       : { id: `s${++signalCount}`, vehicleId: report.vehicleId, tripId: report.tripId!, routeId: h.routeId, stopId: h.stopId, at: now, distanceM, deadline, waiting: 1 };
     live.set(place, signal);
+    h.place = place;
     note(h, 'committed', { deadline, signalId: signal.id }, report.vehicleId);
     signals.signal(signal);
+  };
+  // Takes the hail off its signal, and retracts the signal once no live hail is left on it (FR12). Whether a signal
+  // that keeps other hails lowers waiting and moves its deadline later is open (#38, issuecomment-6068389494).
+  // ponytail: scans every live hail per withdrawal; count hails per signal if that shows.
+  const release = (h: Hail, reason: WithdrawalReason) => {
+    const place = h.place;
+    if (!place) return;
+    h.place = undefined;
+    if ([...hails.values()].some((o) => o.place === place)) return;
+    signals.retract(live.get(place)!.id, reason);
+    live.delete(place);
+  };
+  // A changed resolution: a fresh report puts a bus of the hail's route, not skipped, nearer than the run the hail
+  // committed on, and that bus is due now, by the commit rule. The hail's signal is retracted, then the hail commits on
+  // that bus (ADR-003; ADR-037 decision 1). A stale prediction is no resolution (ADR-037 decision 1), and a hail whose
+  // run no longer calls at the stop, having passed it or left the feed, stays where it is.
+  const reconsider = (h: Hail, now: number) => {
+    const ahead = calling(h, now).filter((c) => !h.skipped.has(run(c.report)));
+    const p = ahead[0];
+    if (ahead.findIndex((c) => run(c.report) === h.resolvedTo) <= 0 || p.stale) return;
+    const d = signalDeadline(now, p.distanceM, p.speedMps, decelMps2);
+    if (p.speedMps === 0 ? p.distanceM > reach(p.report, h.stopId) : !d || now < d.deadline - FEED_INTERVAL_MS) return;
+    release(h, 'moved');
+    h.resolvedTo = run(p.report);
+    commit(h, p, d?.deadline ?? null, now);
   };
 
   // The live hails a presence event moves: every one of that passenger's at that stop.
@@ -241,10 +272,11 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
         return;
       }
       case 'cancel': {
-        // Only a cancel withdraws a hail (ADR-010 decision 2, ADR-040).
-        // ponytail: a cancel after the commit leaves the signal on the console until #38 retracts it.
+        // Only a cancel withdraws a hail (ADR-010 decision 2, ADR-040), and a committed one leaves its signal (FR2, FR12).
         const h = registration(event);
-        if (h) end(h, 'withdrawn');
+        if (!h) return;
+        end(h, 'withdrawn');
+        release(h, 'cancelled');
         return;
       }
       case 'presence-start': {
@@ -264,7 +296,10 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
             h.unattended = false;
             h.wake = undefined;
             note(h, 'left');
-          } else if (h.state === 'committed') end(h, 'spent');
+          } else if (h.state === 'committed') {
+            end(h, 'spent');
+            release(h, 'left');
+          }
         }
         return;
       }
@@ -314,7 +349,10 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
         // 08-10-2026). Deleting from a Map while iterating it is safe in JavaScript.
         const seen = new Set(event.reports.map((r) => r.vehicleId));
         for (const vehicleId of runs.keys()) if (!seen.has(vehicleId)) runs.delete(vehicleId);
-        for (const h of hails.values()) if (h.state === 'eligible') consider(h, now);
+        for (const h of hails.values()) {
+          if (h.state === 'eligible') consider(h, now);
+          else if (h.state === 'committed') reconsider(h, now);
+        }
         return;
       }
     }
