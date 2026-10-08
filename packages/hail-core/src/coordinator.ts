@@ -232,13 +232,13 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
     h.place = undefined;
     const was = place && live.get(place);
     if (!was) return;
-    const left = [...hails.values()].filter((o) => o.place === place).map((o) => o.deadline ?? null);
-    if (!left.length) {
+    const rest = [...hails.values()].filter((o) => o.place === place).map((o) => o.deadline ?? null);
+    if (!rest.length) {
       signals.retract(was.id, reason);
       live.delete(place);
       return;
     }
-    const signal = { ...was, waiting: left.length, deadline: left.some((d) => d === null) ? null : Math.min(...(left as number[])) };
+    const signal = { ...was, waiting: rest.length, deadline: rest.some((d) => d === null) ? null : Math.min(...(rest as number[])) };
     live.set(place, signal);
     signals.signal(signal);
   };

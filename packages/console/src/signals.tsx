@@ -2,7 +2,7 @@
 // URLs are relative, so the page works wherever the hail service serves it from (#50).
 import type { Signal } from '../../hail-core/src/signal.ts';
 
-// Applies #44's stream to the signals on screen: `signal` adds one, or replaces the one with its id when a hail joins it
+// Applies #44's stream to the signals on screen: `signal` adds one, or replaces the one with its id when a hail joins or leaves it
 // (#35), and `retract` removes the one it names.
 // `source` is the page's EventSource, or any EventTarget dispatching MessageEvents, as the tests do.
 export function subscribe(source: EventTarget, update: (change: (shown: Signal[]) => Signal[]) => void): void {

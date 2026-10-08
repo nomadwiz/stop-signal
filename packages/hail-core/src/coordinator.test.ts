@@ -958,6 +958,27 @@ describe('hailCoordinator: withdrawal and re-sending (#38)', () => {
     expect(s.signals.at(-1)).toMatchObject({ id: 's1', waiting: 1, deadline: committed(s)[1].payload.deadline });
     expect(s.retractions()).toEqual([]);
   });
+
+  it('keeps a stopped-vehicle commit\'s null deadline, earliest of all, when a moving hail leaves the signal (ADR-042 decisions 2 and 4)', () => {
+    const s = service();
+    s.at(T - 60_000, ...arrived(1, 2));
+    moves(s, T - 10_000, 400);
+    moves(s, T, 300, ...hails(1));
+    moves(s, T + 10_000, 300, ...hails(2));
+    s.at(T + 11_000, { ...cancel, handle: passenger(1) });
+
+    expect(s.signals.at(-1)).toMatchObject({ id: 's1', waiting: 1, deadline: null });
+  });
+
+  it('retracts a shared signal once with feed when a stale feed ends its hails, with no re-send first (ADR-038)', () => {
+    const s = service();
+    s.at(T - 60_000, ...arrived(1, 2));
+    moves(s, T - 10_000, 400);
+    moves(s, T, 300, ...hails(1, 2));
+    s.at(T + 30_001);
+
+    expect(s.port).toEqual(['signal s1', 'signal s1', 'retract s1 feed']);
+  });
 });
 
 // T2, the lifecycle unit suite (doc/output/m1-revised.md §7.2; #33): every state a hail can be in, against every event
