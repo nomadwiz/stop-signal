@@ -152,8 +152,13 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
       const key = run(p.report);
       if (h.skipped.has(key)) continue;
       const resolved = h.resolvedTo === key;
-      h.resolvedTo = key;
       const d = signalDeadline(now, p.distanceM, p.speedMps, decelMps2);
+      // A stale pick the hail never resolved to, extrapolated already inside its stopping distance, is neither skipped
+      // (ADR-039 decision 5) nor allowed to end the hail: the hail waits for its next report, and ADR-022's 90 s cutoff
+      // bounds the wait (ADR-039, annotated 08-10-2026). The pick is not recorded as resolved to, so a snapshot that only
+      // re-serves its old fix does not end the hail on it either; the next tick runs this again.
+      if (p.stale && p.speedMps > 0 && !d && !resolved) return;
+      h.resolvedTo = key;
       const vehicleId = p.report.vehicleId;
       // A stale prediction is no current estimate, so the hail never commits on it before the deadline, and waits for
       // the vehicle's next report until the deadline extrapolated from it (ADR-023, ADR-037 decision 1). Still stale

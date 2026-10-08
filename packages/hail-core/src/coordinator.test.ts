@@ -447,16 +447,54 @@ describe('hailCoordinator: the deadline and a stale prediction', () => {
     expect(s.records.at(-1)).toMatchObject({ at: deadlines()[1], kind: 'abandoned', vehicleId: 'V2', payload: { reason: 'stale' } });
   });
 
-  it('abandons a hail that becomes eligible on a stale prediction past its extrapolated deadline (ADR-023, decided 07-10-2026)', () => {
+  it("waits, rather than abandons, on a stale pick it never resolved to that is past its extrapolated deadline, and lets the vehicle's next report decide (ADR-039, annotated 08-10-2026)", () => {
     const s = service();
     for (const t of [T - 20_000, T]) s.tick(t, v1(t));
 
-    // At T + 75 s V1 is extrapolated to 50 m out, on a report 75 s old.
+    // At T + 75 s V1 is extrapolated to 50 m out, on a report 75 s old, inside its stopping distance.
     s.at(T + 45_000, register, start);
     s.at(T + 75_000);
+    expect(s.kinds()).toEqual(['registered', 'present', 'eligible']);
 
-    expect(timeline(s.records).at(-1)).toEqual(['abandoned', 75]);
-    expect(s.records.at(-1)!.payload).toEqual({ reason: 'stale' });
+    // V1 had slowed: at T + 80 s it reports 300 m out at 6.25 m/s, so its deadline is T + 122.5 s and it commits at
+    // T + 92.5 s.
+    s.tick(T + 80_000, v1(T + 80_000, 300));
+    s.at(T + 92_527);
+    expect(s.kinds()).toEqual(['registered', 'present', 'eligible']);
+    s.at(T + 92_528);
+    expect(s.records.at(-1)).toMatchObject({ kind: 'committed', vehicleId: 'V1' });
+  });
+
+  it('waits on a new stale pick already inside its stopping distance when the cutoff passes the old one over at its deadline wakeup, until the next bus can be resolved (ADR-039, annotated 08-10-2026)', () => {
+    const s = service();
+    // A, V1, reports last at T + 1 s, 981.6 m out at 10 m/s: the hail follows it, waits on its stale deadline at
+    // T + 91.6 s, and the 90 s cutoff passes it over from T + 91 s. B, V2, runs 15 m/s behind and reports last at
+    // T + 40 s, 874 m out: at T + 91.6 s it is extrapolated to 100 m out, inside its 155 m stopping distance, and
+    // past the stop from T + 98.3 s. The hail never resolved to B.
+    const a = (t: number) => v1(t, 981.6 - (t - T - 1_000) / 100);
+    const b = (t: number) => report('V2', 'A2', 874 - (15 * (t - T - 40_000)) / 1_000, t);
+    s.at(T - 60_000, register, start);
+    s.at(T - 30_000);
+    s.tick(T - 19_000, a(T - 19_000));
+    s.tick(T + 1_000, a(T + 1_000));
+    s.tick(T + 30_000, a(T + 1_000), b(T + 30_000));
+    s.tick(T + 40_000, a(T + 1_000), b(T + 40_000));
+    const [deadline] = s.scheduled.filter(({ event }) => event.kind === 'wakeup' && event.purpose === 'deadline').map((w) => w.at);
+    expect(deadline).toBeCloseTo(T + 91_604.4, 0);
+
+    s.at(deadline);
+    // A snapshot re-serving B's old fix, still inside its stopping distance, is no next report: the hail waits on.
+    s.tick(T + 95_000, a(T + 1_000), b(T + 40_000));
+    expect(s.kinds()).toEqual(['registered', 'present', 'eligible']);
+
+    // C, V4 on route R, 800 m out at T + 100 s at 10 m/s: once B is past the stop, the hail resolves to C, whose
+    // deadline is T + 172.4 s and commit instant T + 142.4 s.
+    const c = (t: number) => report('V4', 'A1', 800 - (t - T - 100_000) / 100, t);
+    for (const t of [T + 100_000, T + 110_000, T + 130_000]) s.tick(t, a(T + 1_000), b(T + 40_000), c(t));
+    s.at(T + 142_444);
+    expect(s.kinds()).toEqual(['registered', 'present', 'eligible']);
+    s.at(T + 142_445);
+    expect(s.records.at(-1)).toMatchObject({ kind: 'committed', vehicleId: 'V4' });
   });
 });
 
