@@ -324,6 +324,7 @@ describe('hailCoordinator: aggregation (#35)', () => {
     moves(s, T + 20_000, 200, ...hails(3));
 
     expect(committed(s).map((r) => r.payload.deadline === null)).toEqual([false, true, false]);
+    expect(committed(s)[2].payload.deadline).toBeCloseTo(T + 32_444, -1);
     expect(s.signals.at(-1)).toMatchObject({ id: 's1', deadline: null, waiting: 3 });
   });
 
