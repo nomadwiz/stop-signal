@@ -1,11 +1,13 @@
 // C2: runs each hail through its lifecycle state machine, from register to commit (#32, FR7, FR13; Milestone 2's
 // Figure 5.4), and C5's watchdog, which ends every live hail on a stale feed (#41, FR14). One function applies every
 // event the loop hands it, in queue order (ADR-002), and writes exactly one decision record per transition (ADR-017).
+// C9 (#61, FR11): it tells the passenger each hail's outcome through NotificationPort.
 // S5 (#38, FR12): a signal is retracted when its last live hail leaves it, and a changed resolution re-signals.
 import type { Clock } from './clock.ts';
 import { signalDeadline } from './deadline.ts';
 import type { HailEvent } from './events.ts';
 import { FEED_INTERVAL_MS, predict, type Point } from './predict.ts';
+import type { NotificationPort, Outcome } from './notification.ts';
 import { CALL_RADIUS_M, callingAt, type Timetable, type VehicleReport } from './resolve.ts';
 import type { Signal, SignalPort, WithdrawalReason } from './signal.ts';
 import type { Json, recorder } from './trace.ts';
@@ -31,6 +33,8 @@ interface Hail {
   state: 'registered' | 'present' | 'eligible' | 'committed';
   left: boolean;
   unattended: boolean;
+  // Told confirmed or unacknowledged, at most one of them (#61).
+  told: boolean;
   // The vehicle runs this hail passed over for being too close to stop, never resolved to again (ADR-039 decision 2).
   skipped: Set<string>;
   // The run the hail last resolved to: its last pick, stale or fresh, except a stale pick already inside its stopping
@@ -46,10 +50,11 @@ type Purpose = Extract<HailEvent, { kind: 'wakeup'; hailId: string }>['purpose']
 // A vehicle run: one vehicle on one trip on one service day (ADR-025).
 const run = ({ vehicleId, tripId, startDate }: VehicleReport) => JSON.stringify([vehicleId, tripId, startDate]);
 
-export function hailCoordinator({ clock, record, signals, schedule, timetable, decelMps2, dwellMs }: {
+export function hailCoordinator({ clock, record, signals, notify, schedule, timetable, decelMps2, dwellMs }: {
   clock: Clock;
   record: ReturnType<typeof recorder>;
   signals: SignalPort;
+  notify: NotificationPort;
   schedule: (at: number, event: HailEvent) => void;
   timetable: ServiceDay;
   decelMps2: number;
@@ -57,8 +62,8 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
 }): (event: HailEvent) => void {
   // Insertion order, so every event reaches the hails it names in the order they registered. Ids count up from h1,
   // so a replay numbers them alike.
-  // ponytail: a committed hail whose passenger never reports leaving stays here until #61's outcomes end it; a hail
-  // for an unknown stop or route stays until cancelled. Reject unknown stops at register if
+  // ponytail: a committed hail whose passenger never reports leaving stays here after its outcome (#61), until a cancel
+  // or a stale feed; a hail for an unknown stop or route stays until cancelled. Reject unknown stops at register if
   // that growth matters.
   const hails = new Map<string, Hail>();
   let hailCount = 0;
@@ -90,9 +95,23 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
     note(h, kind, payload, vehicleId);
     hails.delete(h.id);
   };
+  const tell = (h: Hail, outcome: Omit<Outcome, 'stop' | 'route'>) => notify.outcome(h.handle, { stop: h.stopId, route: h.routeId, ...outcome });
+  // Every abandonment is cannot hail, and says why (m1-revised.md §5.4; ADR-038's open item, #61).
+  const abandon = (h: Hail, reason: 'stale' | 'deadline' | 'feed', vehicleId: string | null, next?: { nextDistanceM: number | null }) => {
+    end(h, 'abandoned', { reason }, vehicleId);
+    tell(h, { outcome: 'cannot-hail', reason, ...next });
+  };
+  // A committed hail is told confirmed on an acknowledgement of its signal, or unacknowledged at its own deadline with
+  // none, whichever comes first, and stays committed until it ends (#61).
+  const answer = (h: Hail, outcome: 'confirmed' | 'unacknowledged') => {
+    h.told = true;
+    h.wake = undefined;
+    note(h, outcome, {}, live.get(h.place!)!.vehicleId);
+    tell(h, { outcome });
+  };
   // A stale feed ends the hail in cannot hail, naming the vehicle it last resolved to, if any (ADR-017, annotated
   // 09-10-2026). The watchdog then retracts each committed hail's signal with feed (ADR-038, decided 09-10-2026).
-  const abandonOnFeed = (h: Hail) => end(h, 'abandoned', { reason: 'feed' }, h.resolvedTo ? JSON.parse(h.resolvedTo)[0] : null);
+  const abandonOnFeed = (h: Hail) => abandon(h, 'feed', h.resolvedTo ? JSON.parse(h.resolvedTo)[0] : null);
   const wake = (h: Hail, purpose: Purpose, at: number) => {
     if (h.wake?.at === at && h.wake.purpose === purpose) return;
     h.wake = { at, purpose };
@@ -118,7 +137,7 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
   // prediction at now. A run with one fix has no speed yet, a silent one is passed over, and an unknown stop has no
   // candidates.
   // ponytail: scans every run per eligible hail per event, and per committed hail per tick (#38), which grows with the
-  // committed hails a service day keeps until #61 ends them; index the runs by route if the live feed makes this slow.
+  // committed hails a service day keeps after their outcomes; index the runs by route if the live feed makes this slow.
   const calling = (h: Hail, now: number) => {
     const stop = timetable.stops.get(h.stopId);
     if (!stop) return [];
@@ -161,7 +180,8 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
   // later report that moves the deadline replaces. Run on eligibility, on every tick, and on its own wakeups. The pick is
   // the nearest calling vehicle not skipped; every pick, stale or fresh, is what the hail has resolved to.
   const consider = (h: Hail, now: number, purpose?: Purpose) => {
-    for (const p of calling(h, now)) {
+    const candidates = calling(h, now);
+    for (const [i, p] of candidates.entries()) {
       const key = run(p.report);
       if (h.skipped.has(key)) continue;
       const resolved = h.resolvedTo === key;
@@ -179,7 +199,7 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
       // run the hail last resolved to ends it only on that run: a new pick, as when the 90 s cutoff passes the old one
       // over, waits for its own deadline (ADR-039, annotated 08-10-2026).
       if (p.stale) {
-        if ((purpose === 'deadline' && resolved) || (p.speedMps > 0 && !d)) return end(h, 'abandoned', { reason: 'stale' }, vehicleId);
+        if ((purpose === 'deadline' && resolved) || (p.speedMps > 0 && !d)) return abandon(h, 'stale', vehicleId);
         if (d) wake(h, 'deadline', d.deadline);
         return;
       }
@@ -193,7 +213,8 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
       // decision 3); skipped, as at registration, if this is the first time the hail picks it, and the next calling
       // vehicle considered in its place (ADR-039, annotated 08-10-2026).
       if (!d) {
-        if (resolved) return end(h, 'abandoned', { reason: 'deadline' }, vehicleId);
+        // ponytail: the next bus is the next calling run not skipped, even one also inside its stopping distance.
+        if (resolved) return abandon(h, 'deadline', vehicleId, { nextDistanceM: candidates.slice(i + 1).find((c) => !h.skipped.has(run(c.report)))?.distanceM ?? null });
         h.skipped.add(key);
         note(h, 'skipped', { candidates: [vehicleId] });
         continue;
@@ -222,6 +243,7 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
     h.deadline = deadline;
     note(h, 'committed', { deadline, signalId: signal.id }, report.vehicleId);
     signals.signal(signal);
+    if (deadline !== null && !h.told) wake(h, 'deadline', deadline);
   };
   // Takes the hail off its signal (FR12). The signal is retracted once no live hail is left on it; otherwise it is
   // handed over again under its id, counting the hails left at the earliest of their deadlines (ADR-042, decided
@@ -269,7 +291,7 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
       case 'register': {
         if (registration(event)) return;
         const { handle, stopId, routeId, leadTimeS } = event;
-        const h: Hail = { id: `h${++hailCount}`, handle, stopId, routeId, state: 'registered', left: false, unattended: false, skipped: new Set() };
+        const h: Hail = { id: `h${++hailCount}`, handle, stopId, routeId, state: 'registered', left: false, unattended: false, told: false, skipped: new Set() };
         hails.set(h.id, h);
         note(h, 'registered', { stopId, routeId, leadTimeS });
         // No hail lives while the feed is stale, so nothing predicts on it (#41; FR14).
@@ -337,7 +359,12 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
         if (h?.wake?.at !== event.at || h.wake.purpose !== event.purpose) return;
         h.wake = undefined;
         if (event.purpose === 'dwell') eligible(h, now);
+        else if (h.state === 'committed') answer(h, 'unacknowledged');
         else consider(h, now, event.purpose);
+        return;
+      }
+      case 'console-ack': {
+        for (const h of hails.values()) if (!h.told && h.place && live.get(h.place)?.id === event.signalId) answer(h, 'confirmed');
         return;
       }
       case 'tick': {

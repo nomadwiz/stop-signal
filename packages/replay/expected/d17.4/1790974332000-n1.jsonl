@@ -6,5 +6,7 @@
 {"seq":6,"at":1790974062000,"kind":"eligible","hailId":"h2","vehicleId":null,"payload":{}}
 {"seq":7,"at":1790974288602.9314,"kind":"committed","hailId":"h1","vehicleId":"14330","payload":{"deadline":1790974318602.9314,"signalId":"s1"}}
 {"seq":8,"at":1790974288870.047,"kind":"committed","hailId":"h2","vehicleId":"47458","payload":{"deadline":1790974318870.047,"signalId":"s2"}}
-{"seq":9,"at":1790974332000,"kind":"spent","hailId":"h1","vehicleId":null,"payload":{}}
-{"seq":10,"at":1790974340870,"kind":"spent","hailId":"h2","vehicleId":null,"payload":{}}
+{"seq":9,"at":1790974318602.9314,"kind":"unacknowledged","hailId":"h1","vehicleId":"14330","payload":{}}
+{"seq":10,"at":1790974318870.047,"kind":"unacknowledged","hailId":"h2","vehicleId":"47458","payload":{}}
+{"seq":11,"at":1790974332000,"kind":"spent","hailId":"h1","vehicleId":null,"payload":{}}
+{"seq":12,"at":1790974340870,"kind":"spent","hailId":"h2","vehicleId":null,"payload":{}}

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { hailCoordinator, type ServiceDay } from './coordinator.ts';
 import type { HailEvent } from './events.ts';
+import type { Outcome } from './notification.ts';
 import { eventLoop, scheduler } from './loop.ts';
 import type { VehicleReport } from './resolve.ts';
 import type { Signal, WithdrawalReason } from './signal.ts';
@@ -50,6 +51,8 @@ function service(timetable: ServiceDay = road) {
   // What SignalPort was handed, in order: 'signal <id>' or 'retract <id> <reason>'.
   const port: string[] = [];
   const scheduled: { at: number; event: HailEvent }[] = [];
+  // What NotificationPort was handed, in order (#61).
+  const outcomes: (Outcome & { handle: string })[] = [];
   const wakeups = scheduler<HailEvent>(clock, eventLoop<HailEvent>((e) => apply(e)));
   const apply = hailCoordinator({
     clock,
@@ -61,6 +64,7 @@ function service(timetable: ServiceDay = road) {
       },
       retract: (id: string, reason: WithdrawalReason) => port.push(`retract ${id} ${reason}`),
     },
+    notify: { outcome: (handle, o) => outcomes.push({ handle, ...o }) },
     schedule: (at, event) => {
       scheduled.push({ at, event });
       wakeups.at(at, event);
@@ -80,6 +84,7 @@ function service(timetable: ServiceDay = road) {
     records,
     signals,
     port,
+    outcomes,
     retractions: () => port.filter((p) => p.startsWith('retract')),
     scheduled,
     kinds: () => records.map((r) => r.kind),
@@ -895,6 +900,67 @@ describe('hailCoordinator: a stale feed (#41)', () => {
 
 // S5: retraction (#38, FR12). A signal is retracted when its last live hail leaves it; a changed resolution retracts
 // it from the first vehicle and signals the second (ADR-003; ADR-037 decision 1).
+describe('hailCoordinator: the outcome (#61, FR11)', () => {
+  // h1 commits on V1 at T + 42.4 s, its deadline T + 72.4 s; V1 reports every 20 s until T + 60 s.
+  const committed = () => {
+    const s = service();
+    s.at(T - 40_000, register, start);
+    for (const t of [T - 20_000, T, T + 20_000, T + 40_000]) s.tick(t, v1(t));
+    s.at(T + 42_445);
+    s.tick(T + 60_000, v1(T + 60_000));
+    return s;
+  };
+  const told = (outcome: Outcome['outcome']) => ({ handle: HANDLE, stop: 'S', route: 'R', outcome });
+
+  it('tells the passenger confirmed when the console acknowledges the hail\'s signal, and nothing more at its deadline', () => {
+    const s = committed();
+
+    s.at(T + 50_000, { kind: 'console-ack', signalId: 's1' });
+    s.at(T + 80_000);
+
+    expect(s.outcomes).toEqual([told('confirmed')]);
+    expect(s.records.filter((r) => r.kind === 'confirmed')).toMatchObject([{ at: T + 50_000, hailId: 'h1', vehicleId: 'V1', payload: {} }]);
+  });
+
+  it('tells the passenger unacknowledged at the hail\'s deadline with no acknowledgement, and ignores a later one', () => {
+    const s = committed();
+
+    s.at(T + 72_444);
+    expect(s.outcomes).toEqual([]);
+    s.at(T + 72_445);
+    s.at(T + 75_000, { kind: 'console-ack', signalId: 's1' });
+
+    expect(s.outcomes).toEqual([told('unacknowledged')]);
+    expect(timeline(s.records).at(-1)).toEqual(['unacknowledged', 72.445]);
+  });
+
+  it('tells the passenger cannot hail, feed stale, when a stale feed abandons the hail', () => {
+    const s = service();
+    s.at(T - 40_000, register, start);
+    for (const t of [T - 20_000, T, T + 20_000, T + 40_000]) s.tick(t, v1(t));
+    s.at(T + 42_445);
+
+    s.at(T + 70_001);
+
+    expect(s.outcomes).toEqual([{ ...told('cannot-hail'), reason: 'feed' }]);
+  });
+
+  it('tells the passenger cannot hail, deadline unreachable, with how far away the route\'s next bus is (ADR-038)', () => {
+    const s = service();
+    s.at(T - 40_000, register, start);
+    for (const t of [T - 20_000, T, T + 20_000]) s.tick(t, v2(t), v1(t));
+    // V1 speeds up to 25 m/s, 100 m out, inside its stopping distance; V2 is 700 m out.
+    s.tick(T + 40_000, v2(T + 40_000), v1(T + 40_000, 100));
+
+    expect(s.outcomes).toMatchObject([{ ...told('cannot-hail'), reason: 'deadline' }]);
+    expect(s.outcomes[0].nextDistanceM).toBeCloseTo(700, 0);
+  });
+
+  it.todo('a hail committed on a stopped vehicle has no deadline: when is it unacknowledged? (owner\'s decision)');
+  it.todo('a hail spent by a presence-end before an acknowledgement or its deadline: is it told an outcome? (owner\'s decision)');
+  it.todo('a hail already told confirmed or unacknowledged that a changed resolution moves to another bus: is it told again? (owner\'s decision)');
+});
+
 describe('hailCoordinator: withdrawal and re-sending (#38)', () => {
   it('retracts from the first vehicle, then signals the second, when a fresh report puts a due bus of the route nearer', () => {
     const s = service();
@@ -1102,7 +1168,8 @@ const ALREADY_UNATTENDED = 'already Unattended: ADR-017, one record per transiti
 const DUPLICATE = 'one live hail per handle, stop and route: ADR-032 decision 4; ADR-010, annotated 08-10-2026';
 const ENDED = 'the hail has ended, so nothing names it';
 const NOT_ELIGIBLE = 'only an eligible hail resolves: ADR-039, annotated 07-10-2026; ADR-040 decision 3';
-const NO_ACK_YET = 'what an acknowledgement means is #61\'s: ADR-032 decision 3';
+const NOT_SIGNALLED = 'no signal of its own to acknowledge: #61';
+const CONFIRMED = 'an acknowledgement of its signal is confirmed: FR11; #61';
 const STALE_WAKEUP = 'not the wakeup the hail waits for: ADR-040 decisions 2 and 3; ADR-037 decision 1';
 const SAME_PRESENCE = 'presence runs from the first presence-start until a presence-end: ADR-006; ADR-040, annotated 07-10-2026';
 const FEED_RULE = 'ADR-017 and ADR-038, annotated 09-10-2026';
@@ -1192,20 +1259,20 @@ const table: Record<keyof typeof events, Record<State, Row>> = {
     'feed stale': [[], NO_HAIL],
   },
   'console-ack': {
-    none: [[], NO_ACK_YET],
-    registered: [[], NO_ACK_YET],
-    left: [[], NO_ACK_YET],
-    present: [[], NO_ACK_YET],
-    'present, unattended': [[], NO_ACK_YET],
-    eligible: [[], NO_ACK_YET],
-    'eligible, unattended': [[], NO_ACK_YET],
-    'eligible, stale': [[], NO_ACK_YET],
-    committed: [[], NO_ACK_YET],
-    'committed, unattended': [[], NO_ACK_YET],
-    withdrawn: [[], NO_ACK_YET],
-    spent: [[], NO_ACK_YET],
-    abandoned: [[], NO_ACK_YET],
-    'feed stale': [[], NO_ACK_YET],
+    none: [[], NO_HAIL],
+    registered: [[], NOT_SIGNALLED],
+    left: [[], NOT_SIGNALLED],
+    present: [[], NOT_SIGNALLED],
+    'present, unattended': [[], NOT_SIGNALLED],
+    eligible: [[], NOT_SIGNALLED],
+    'eligible, unattended': [[], NOT_SIGNALLED],
+    'eligible, stale': [[], NOT_SIGNALLED],
+    committed: [['confirmed'], CONFIRMED],
+    'committed, unattended': [['confirmed'], `${CONFIRMED}; Unattended carries on, ADR-010 decision 3`],
+    withdrawn: [[], ENDED],
+    spent: [[], ENDED],
+    abandoned: [[], ENDED],
+    'feed stale': [[], NO_HAIL],
   },
   tick: {
     none: [[], NO_HAIL],
@@ -1280,8 +1347,9 @@ const table: Record<keyof typeof events, Record<State, Row>> = {
     eligible: [[], STALE_WAKEUP],
     'eligible, unattended': [[], STALE_WAKEUP],
     'eligible, stale': [['abandoned stale'], 'still stale at its deadline: ADR-023, decided 07-10-2026'],
-    committed: [[], STALE_WAKEUP],
-    'committed, unattended': [[], STALE_WAKEUP],
+    // Its deadline wakeup, at T + 72.4 s, would tell it unacknowledged (#61), but no tick comes after T + 20 s.
+    committed: [['abandoned feed', 'retract s1 feed'], `the feed goes stale at T + 50 s, first; ${FEED}`],
+    'committed, unattended': [['abandoned feed', 'retract s1 feed'], `the feed goes stale at T + 50 s, first; ${FEED}`],
     withdrawn: [[], ENDED],
     spent: [[], ENDED],
     abandoned: [[], ENDED],

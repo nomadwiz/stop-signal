@@ -28,10 +28,11 @@ const signals = driverChannel(day);
 const record = recorder(clock, { append: (r) => console.log(JSON.stringify(r)) });
 
 const wakeups = scheduler<HailEvent>(clock, eventLoop<HailEvent>((e) => apply(e)));
-const apply = hailCoordinator({ clock, record, signals, schedule: wakeups.at, timetable: day, decelMps2: DECEL_MPS2, dwellMs: DWELL_MS });
+const passengers = passengerChannel(wakeups.submit);
+const apply = hailCoordinator({ clock, record, signals, notify: passengers, schedule: wakeups.at, timetable: day, decelMps2: DECEL_MPS2, dwellMs: DWELL_MS });
 setInterval(wakeups.wake, WAKE_INTERVAL_MS);
 
-const server = hailServer({ channel: signals, passengers: passengerChannel(wakeups.submit), submit: wakeups.submit });
+const server = hailServer({ channel: signals, passengers, submit: wakeups.submit });
 server.listen(Number(process.env.PORT ?? 8080), '127.0.0.1', () => {
   const { address, port } = server.address() as AddressInfo;
   console.error(`hail service listening on ${address}:${port}`);
