@@ -31,6 +31,17 @@ describe('m4b', () => {
     expect(m4b(log)).toEqual({ approaches: 2, corrected: 0, retractions: 0, late: 0 });
   });
 
+  it('counts a correction when the other hail on the signal has ended, the signal then being retracted', () => {
+    const log = [
+      registered('h1', 'S'), committed('h1', 'V1', T + 10_000, T + 60_000, 's1'),
+      registered('h2', 'S'), committed('h2', 'V1', T + 10_000, T + 60_000, 's1'),
+      record('withdrawn', 'h2', T + 20_000, 'V1', {}),
+      committed('h1', 'V2', T + 30_000, T + 50_000, 's2'),
+    ];
+
+    expect(m4b(log)).toEqual({ approaches: 2, corrected: 1, retractions: 1, late: 0 });
+  });
+
   it("counts a retraction at or after the first vehicle's deadline as late, and a due-at-once commit as always late", () => {
     const log = [
       registered('h1', 'S'), committed('h1', 'V1', T + 10_000, T + 60_000, 's1'), committed('h1', 'V2', T + 60_000, T + 90_000, 's2'),
