@@ -98,7 +98,7 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
     }
     const hs = built.flatMap((s, i) => hails(s, logs[i]));
     const c = dwell(hs);
-    console.log(`\nNot right: ${all.reduce((n, x) => n + x.wrong, 0)} on the wrong vehicle, ${all.reduce((n, x) => n + x.none, 0)} with no commit before the call, of which ${hs.filter((h) => h.abandoned && !h.committed).length} hails were abandoned.`);
+    console.log(`\nNot right: ${all.reduce((n, x) => n + x.wrong, 0)} on the wrong vehicle, ${all.reduce((n, x) => n + x.none, 0)} with no commit, of which ${hs.filter((h) => h.abandoned && !h.committed).length} hails were abandoned.`);
     console.log(`Of ${c.hails} hails, ${c.eligible} became eligible: ${c.afterCommitInstant} after their commit instant, committing at once; ${c.afterDeadline} after their target's deadline, skipping it.`);
     console.log(`${c.registeredInside} registered with their target already inside its stopping distance.`);
   }
