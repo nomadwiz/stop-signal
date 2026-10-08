@@ -909,6 +909,18 @@ describe('hailCoordinator: withdrawal and re-sending (#38)', () => {
     expect(s.port).toEqual(['signal s1', 'retract s1 moved', 'signal s2']);
   });
 
+  it("retracts before the first vehicle's deadline, the instant of the hail's second commit (#39, FR12)", () => {
+    const s = service();
+    s.at(T - 60_000, register, start);
+    for (const t of [T - 20_000, T, T + 20_000]) s.tick(t, v1(t));
+    s.tick(T + 40_000, v1(T + 40_000), report('V2', 'A2', 600, T + 40_000));
+    s.at(T + 42_445);
+    s.tick(T + 60_000, v1(T + 60_000, 380), report('V2', 'A2', 300, T + 60_000));
+
+    const [first, second] = committed(s);
+    expect(second.at).toBeLessThan(first.payload.deadline as number);
+  });
+
   // V2 reports as [tick, metres before S, fix], seconds from T. V1 commits h1 at T + 42.4 s and slows to 1 m/s 380 m out
   // at T + 60 s, where V2 is nearer: only the guard named keeps h1 on V1.
   it.each([
