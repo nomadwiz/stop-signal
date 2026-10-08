@@ -61,6 +61,12 @@ export function replay(timetable: ServiceDay, timed: readonly Timed[]): string[]
   return log;
 }
 
+// The logs that fail T7: each replayed log that differs from, or has no, expected log, then each expected log with no
+// scenario left to replay it (stale). Both maps are keyed by the log's path under expected/.
+export function failing(replayed: ReadonlyMap<string, string>, expected: ReadonlyMap<string, string>): string[] {
+  return [...replayed.keys()].filter((f) => expected.get(f) !== replayed.get(f)).concat([...expected.keys()].filter((f) => !replayed.has(f)));
+}
+
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const write = process.argv.includes('--write');
   const here = (path: string) => fileURLToPath(new URL(`../${path}`, import.meta.url));
@@ -74,7 +80,7 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
 
   const scenarios = readdirSync(here('scenarios'), { recursive: true, encoding: 'utf8' }).filter((f) => f.endsWith('.json')).sort();
   const logs = scenarios.map((f) => f.replace(/\.json$/, '.jsonl'));
-  const bad: string[] = [];
+  const replayed = new Map<string, string>();
   for (const [i, f] of scenarios.entries()) {
     const scenario: Scenario = JSON.parse(readFileSync(here(`scenarios/${f}`), 'utf8'));
     const text = replay(index, inputs(snaps, scenario.events)).map((line) => `${line}\n`).join('');
@@ -82,11 +88,11 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
     if (write) {
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, text);
-    } else if (!existsSync(path) || readFileSync(path, 'utf8') !== text) bad.push(logs[i]);
+    } else replayed.set(logs[i], text);
   }
-  // A log with no scenario left to replay it is stale, and fails the check too.
-  const kept = new Set(logs);
-  if (existsSync(here('expected'))) bad.push(...readdirSync(here('expected'), { recursive: true, encoding: 'utf8' }).filter((f) => f.endsWith('.jsonl') && !kept.has(f)));
+  const expected = new Map<string, string>();
+  if (existsSync(here('expected'))) for (const f of readdirSync(here('expected'), { recursive: true, encoding: 'utf8' }).filter((f) => f.endsWith('.jsonl'))) expected.set(f, readFileSync(here(`expected/${f}`), 'utf8'));
+  const bad = write ? [] : failing(replayed, expected);
 
   const s = (ms: number) => `${(ms / 1000).toFixed(1)} s`;
   console.log(`${scenarios.length} scenarios replayed over ${snaps.length} snapshots: ${s(loaded - started)} to load, ${s(performance.now() - loaded)} to replay.`);
