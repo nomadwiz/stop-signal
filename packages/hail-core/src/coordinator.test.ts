@@ -55,7 +55,10 @@ function service(timetable: ServiceDay = road) {
     clock,
     record: recorder(clock, { append: (r) => records.push(r) }),
     signals: {
-      signal: (s) => (signals.push(s), port.push(`signal ${s.id}`)),
+      signal: (s) => {
+        signals.push(s);
+        port.push(`signal ${s.id}`);
+      },
       retract: (id: string, reason: WithdrawalReason) => port.push(`retract ${id} ${reason}`),
     },
     schedule: (at, event) => {
@@ -850,7 +853,7 @@ describe('hailCoordinator: a stale feed (#41)', () => {
       [70_001, 'abandoned', 'h2', null, { reason: 'feed' }],
       [70_001, 'abandoned', 'h3', null, { reason: 'feed' }],
     ]);
-    // The committed hail's signal stays: the reason a feed-stale retraction carries is the project owner's to decide.
+    // The committed hail's signal stays: ADR-038's reason codes name no stale feed.
     expect(s.port).toEqual(['signal s1']);
   });
 
@@ -906,6 +909,28 @@ describe('hailCoordinator: withdrawal and re-sending (#38)', () => {
     expect(s.port).toEqual(['signal s1', 'retract s1 moved', 'signal s2']);
   });
 
+  // V2 reports as [tick, metres before S, fix], seconds from T. V1 commits h1 at T + 42.4 s and slows to 1 m/s 380 m out
+  // at T + 60 s, where V2 is nearer: only the guard named keeps h1 on V1.
+  it.each([
+    ['stale (ADR-037 decision 1)', [[20, 750, 10], [40, 600, 25], [60, 600, 25]]],
+    ['not yet at its commit instant (ADR-037 decision 1)', [[40, 470, 40], [60, 370, 60]]],
+    ['inside its stopping distance (ADR-003 Alt 3)', [[40, 700, 40], [60, 100, 60]]],
+    ['skipped at registration, though stopped within reach since (ADR-039 decisions 1 and 2)', [-80, -70, -50, -40, -20, 0, 20, 40, 60].map((t) => [t, t === -80 ? 400 : t === -70 ? 250 : 50, t])],
+  ])('keeps the hail on its bus when the nearer one is %s', (_, v2) => {
+    const s = service();
+    const tick = (t: number, ...reports: VehicleReport[]) =>
+      s.tick(T + t * 1_000, ...reports, ...v2.filter(([at]) => at === t).map(([, m, fix]) => report('V2', 'A2', m, T + fix * 1_000)));
+    tick(-80);
+    tick(-70);
+    s.at(T - 60_000, register, start);
+    for (const t of [-50, -40]) tick(t);
+    for (const t of [-20, 0, 20, 40]) tick(t, v1(T + t * 1_000));
+    s.at(T + 42_445);
+    tick(60, v1(T + 60_000, 380));
+
+    expect(s.port).toEqual(['signal s1']);
+  });
+
   it('keeps a shared signal while any of its hails is live, and retracts it when the last one leaves', () => {
     const s = service();
     s.at(T - 60_000, ...arrived(1, 2));
@@ -919,7 +944,7 @@ describe('hailCoordinator: withdrawal and re-sending (#38)', () => {
   });
 
   it.todo('lowers a shared signal\'s waiting count, and moves its deadline later, when one of its hails leaves (issuecomment-6068389494: the project owner\'s)');
-  it.todo('retracts a committed hail\'s signal when a stale feed abandons it (ADR-038, annotated 09-10-2026; the reason code is the project owner\'s)');
+  it.todo('retracts a committed hail\'s signal when a stale feed abandons it (ADR-038, annotated 09-10-2026; its reason codes name no stale feed)');
 });
 
 // T2, the lifecycle unit suite (doc/output/m1-revised.md §7.2; #33): every state a hail can be in, against every event
@@ -1234,11 +1259,11 @@ const table: Record<keyof typeof events, Record<State, Row>> = {
     left: [['abandoned feed'], FEED],
     present: [['eligible', 'abandoned feed'], `the dwell ends at T + 30 s, 1 ms before; ${FEED}`],
     'present, unattended': [['eligible', 'abandoned feed'], `the dwell ends at T + 30 s, 1 ms before; ${FEED}`],
-    eligible: [['committed', 'abandoned feed'], `its commit, at T + 42.4 s, comes first; ${FEED}, the signal staying: its reason code is the project owner's`],
-    'eligible, unattended': [['committed', 'abandoned feed'], `its commit, at T + 42.4 s, comes first; ${FEED}, the signal staying: its reason code is the project owner's`],
+    eligible: [['committed', 'abandoned feed'], `its commit, at T + 42.4 s, comes first; ${FEED}, the signal staying: ADR-038's reason codes name no stale feed`],
+    'eligible, unattended': [['committed', 'abandoned feed'], `its commit, at T + 42.4 s, comes first; ${FEED}, the signal staying: ADR-038's reason codes name no stale feed`],
     'eligible, stale': [['abandoned stale'], 'its deadline, T + 72.4 s, comes before the feed goes stale at T + 75 s: ADR-023, decided 07-10-2026'],
-    committed: [['abandoned feed'], `${FEED}, the signal staying: its reason code is the project owner's`],
-    'committed, unattended': [['abandoned feed'], `${FEED}, the signal staying: its reason code is the project owner's`],
+    committed: [['abandoned feed'], `${FEED}, the signal staying: ADR-038's reason codes name no stale feed`],
+    'committed, unattended': [['abandoned feed'], `${FEED}, the signal staying: ADR-038's reason codes name no stale feed`],
     withdrawn: [[], ENDED],
     spent: [[], ENDED],
     abandoned: [[], ENDED],

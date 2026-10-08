@@ -90,8 +90,8 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
     hails.delete(h.id);
   };
   // A stale feed ends the hail in cannot hail, naming the vehicle it last resolved to, if any (ADR-017, annotated
-  // 09-10-2026). A committed hail's signal stays on the console: which reason code a feed-stale retraction carries is
-  // the project owner's to decide (ADR-038, annotated 09-10-2026).
+  // 09-10-2026). ADR-038's annotation of 09-10-2026 has #38 retract a committed hail's signal here, but the reason codes
+  // its [DECIDED:09-10-2026] fixes, left, cancelled and moved, name no stale feed, so the signal stays until one is chosen.
   const abandonOnFeed = (h: Hail) => end(h, 'abandoned', { reason: 'feed' }, h.resolvedTo ? JSON.parse(h.resolvedTo)[0] : null);
   const wake = (h: Hail, purpose: Purpose, at: number) => {
     if (h.wake?.at === at && h.wake.purpose === purpose) return;
@@ -117,7 +117,8 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
   // The runs of the hail's route that call at its stop and have not passed it, nearest first (ADR-036), each with S2's
   // prediction at now. A run with one fix has no speed yet, a silent one is passed over, and an unknown stop has no
   // candidates.
-  // ponytail: scans every run per eligible hail per event; index the runs by route if the live feed makes this slow.
+  // ponytail: scans every run per eligible hail per event, and per committed hail per tick (#38), which grows with the
+  // committed hails a service day keeps until #61 ends them; index the runs by route if the live feed makes this slow.
   const calling = (h: Hail, now: number) => {
     const stop = timetable.stops.get(h.stopId);
     if (!stop) return [];

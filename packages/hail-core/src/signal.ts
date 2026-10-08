@@ -20,8 +20,8 @@ export interface Signal {
   waiting: number;
 }
 
-// Why a signal is withdrawn, which the console words for WithdrawalAlert (ADR-038, decided 09-10-2026). Retraction
-// itself is #38's.
+// Why a signal is withdrawn, which the console words for WithdrawalAlert (ADR-038, decided 09-10-2026). C4 retracts a
+// signal when its last hail is cancelled, leaves, or moves to another bus (#38).
 export type WithdrawalReason = 'left' | 'cancelled' | 'moved';
 
 // Synchronous, because the decision loop awaits nothing but its queue (ADR-002 rule 2).
