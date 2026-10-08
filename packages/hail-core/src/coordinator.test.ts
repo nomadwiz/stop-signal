@@ -889,7 +889,7 @@ describe('hailCoordinator: a stale feed (#41)', () => {
 // ADR-031 defines plus tick and each wakeup. Each state is reached on V1's run, 800 m before S at T at 10 m/s (deadline
 // T + 72.4 s, commit instant T + 42.4 s), and reach() returns E, the instant the event under test arrives, before any
 // wakeup the state still waits for. A row names the records the event writes, by kind and abandonment reason, and the
-// rule that settles it; a string in place of a row is a pair no record settles, left pending with its question.
+// rule that settles it.
 type Service = ReturnType<typeof service>;
 const states = {
   none: { trail: [], reach: (s: Service) => (s.tick(T - 20_000, v1(T - 20_000)), s.tick(T, v1(T)), T + 20_000) },
@@ -996,7 +996,7 @@ const events = {
     else s.at(e, w.event);
   },
 };
-type Row = [written: string[], rule: string, next?: [act: (s: Service, e: number) => void, written: string[]]] | string;
+type Row = [written: string[], rule: string, next?: [act: (s: Service, e: number) => void, written: string[]]];
 
 const WITHDRAWS = 'FR2; ADR-017, decided 07-10-2026';
 const NO_HAIL = 'no hail';
@@ -1010,8 +1010,8 @@ const STALE_WAKEUP = 'not the wakeup the hail waits for: ADR-040 decisions 2 and
 const SAME_PRESENCE = 'presence runs from the first presence-start until a presence-end: ADR-006; ADR-040, annotated 07-10-2026';
 const FEED_RULE = 'ADR-017 and ADR-038, annotated 09-10-2026';
 const FEED = `a stale feed abandons every live hail: ${FEED_RULE}`;
-const RECONNECT = 'Does a presence-start while Unattended end Unattended? No record defines how Unattended ends short of a ' +
-  'presence-end, and ADR-031 has no reconnection event; the coordinator keeps it.';
+// Unattended stays, so a second lost connection writes nothing.
+const STILL_UNATTENDED: Row = [[], 'no reconnection event, so Unattended holds: ADR-010, annotated 09-10-2026', [(s, e) => s.at(e, lost), []]];
 
 const table: Record<keyof typeof events, Record<State, Row>> = {
   register: {
@@ -1051,12 +1051,12 @@ const table: Record<keyof typeof events, Record<State, Row>> = {
     registered: [['present'], 'FR4; ADR-041 decision 1'],
     left: [['returned'], 'a fresh dwell and the skip on return: ADR-040 decision 2, decided 07-10-2026', [(s, e) => (s.tick(e, v1(T)), s.tick(e + 20_000, v1(T)), s.at(e + 30_000)), ['eligible']]],
     present: [[], SAME_PRESENCE, [(s) => s.at(T + 30_000), ['eligible']]],
-    'present, unattended': RECONNECT,
+    'present, unattended': STILL_UNATTENDED,
     eligible: [[], SAME_PRESENCE],
-    'eligible, unattended': RECONNECT,
+    'eligible, unattended': STILL_UNATTENDED,
     'eligible, stale': [[], SAME_PRESENCE],
     committed: [[], SAME_PRESENCE],
-    'committed, unattended': RECONNECT,
+    'committed, unattended': STILL_UNATTENDED,
     withdrawn: [[], `${ENDED}; ${SAME_PRESENCE}`, [(s, e) => s.at(e + 1_000, register), ['registered', 'present', 'eligible']]],
     spent: [[], 'returning fires nothing: ADR-010 decision 1', [(s, e) => (s.tick(e, v1(e)), s.at(e + 1_000, register)), ['registered', 'present']]],
     abandoned: [[], `${ENDED}; ${SAME_PRESENCE}`],
@@ -1221,10 +1221,6 @@ describe('T2: every lifecycle state against every event (#33)', () => {
   for (const [event, row] of Object.entries(table)) {
     describe(event, () => {
       for (const [state, cell] of Object.entries(row)) {
-        if (typeof cell === 'string') {
-          it.todo(`${state}: ${cell}`);
-          continue;
-        }
         const [written, rule, next] = cell;
         it(`${state} writes [${written.join(', ')}]: ${rule}`, () => {
           const s = service();
