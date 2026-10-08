@@ -4,9 +4,9 @@
 //
 // Usage, to print the margins: npx vitest run packages/replay/src/drill.test.ts --silent=false
 //
-// One drill per arrival at each D: the n1 scenario (ADR-035). The feed stops when its hails become eligible, the
-// decision window's start (ADR-041), and resumes two feed intervals later, after the watchdog's wakeup: a replay fires a
-// wakeup only before a later input. The deadline is the one the hail's commit names in T7's expected log, the feed
+// One drill per arrival at each D: the n1 scenario (ADR-035). The feed stops when its hails become eligible (ADR-041),
+// the decision window's start (ADR-002, annotated 09-10-2026). One snapshot two feed intervals later is fed, so the
+// watchdog's wakeup fires: a replay fires a wakeup only before a later input. The deadline is the one the hail's commit names in T7's expected log, the feed
 // intact. Not drilled: an arrival none of whose hails becomes eligible. Not measured: a hail that log commits with no
 // deadline (a stopped vehicle, due at once) or never commits, and a hail the drill still commits before the warning,
 // whose signal has already gone.
