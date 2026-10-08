@@ -14,7 +14,6 @@ import type { Scenario } from './scenarios.ts';
 // One hail as its decision log tells it: its route and the call its passengers want (ADR-035 decision 3), when it was
 // registered and became eligible, its first commit, its abandonment, and every skip it wrote.
 export interface Hail {
-  hailId: string;
   routeId: string;
   target: Scenario['calls'][number];
   registered: number;
@@ -30,7 +29,7 @@ export function hails(scenario: Scenario, log: readonly string[]): Hail[] {
   for (const { at, kind, hailId, vehicleId, payload } of log.map((l): DecisionRecord => JSON.parse(l))) {
     if (kind === 'registered') {
       const routeId = payload.routeId as string;
-      byId.set(hailId!, { hailId: hailId!, routeId, target: scenario.calls.find((c) => c.routeId === routeId)!, registered: at, skipped: [] });
+      byId.set(hailId!, { routeId, target: scenario.calls.find((c) => c.routeId === routeId)!, registered: at, skipped: [] });
       continue;
     }
     const h = byId.get(hailId!)!;

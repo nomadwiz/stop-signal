@@ -34,10 +34,10 @@ describe('hails', () => {
 
     expect(hails(s, log)).toEqual([
       {
-        hailId: 'h1', routeId: 'R', target: s.calls[0], registered: T, eligible: T + 30_000, abandoned: 'stale',
+        routeId: 'R', target: s.calls[0], registered: T, eligible: T + 30_000, abandoned: 'stale',
         skipped: [{ at: T, candidates: ['V1'] }, { at: T + 30_000, candidates: ['V7'] }],
       },
-      { hailId: 'h2', routeId: 'Q', target: s.calls[1], registered: T, eligible: T + 30_000, committed: { at: T + 30_000, vehicleId: 'V2', deadline: T + 50_000 }, skipped: [] },
+      { routeId: 'Q', target: s.calls[1], registered: T, eligible: T + 30_000, committed: { at: T + 30_000, vehicleId: 'V2', deadline: T + 50_000 }, skipped: [] },
     ]);
   });
 });
