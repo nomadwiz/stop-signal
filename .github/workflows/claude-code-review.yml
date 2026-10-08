@@ -98,6 +98,25 @@ jobs:
       - name: Remove any verdict the pull request carries
         run: rm -f verdict.json
 
+      # Scrubbing (CLAUDE_CODE_SUBPROCESS_ENV_SCRUB above) runs each command the
+      # model issues in a sandbox built on bubblewrap and socat. Without bubblewrap
+      # Claude Code refuses to start; without socat every command the model runs
+      # fails. ubuntu-latest ships neither, and its AppArmor policy stops an
+      # unprivileged bubblewrap mapping user IDs ("setting up uid map: Permission
+      # denied"). The profile grants user namespaces to bwrap alone, so every other
+      # process on the runner keeps the restriction.
+      - name: Install the scrub's sandbox
+        run: |
+          sudo apt-get update -q && sudo apt-get install -yq bubblewrap socat
+          sudo tee /etc/apparmor.d/bwrap > /dev/null <<'EOF'
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile bwrap /usr/bin/bwrap flags=(unconfined) {
+            userns,
+          }
+          EOF
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap
+
       - name: Review
         uses: anthropics/claude-code-action@v1
         with:
