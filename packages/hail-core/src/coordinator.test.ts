@@ -721,3 +721,318 @@ describe('hailCoordinator: a lost connection and a spent registration (ADR-010, 
     expect(s.kinds()).toEqual(['registered', 'present', 'eligible', 'committed', 'withdrawn']);
   });
 });
+
+// T2, the lifecycle unit suite (doc/output/m1-revised.md §7.2; #33): every state a hail can be in, against every event
+// ADR-031 defines plus tick and each wakeup. Each state is reached on V1's run, 800 m before S at T at 10 m/s (deadline
+// T + 72.4 s, commit instant T + 42.4 s), and reach() returns E, the instant the event under test arrives, before any
+// wakeup the state still waits for. A row names the records the event writes, by kind and abandonment reason, and the
+// rule that settles it; a string in place of a row is a pair no record settles, left pending with its question.
+type Service = ReturnType<typeof service>;
+const states = {
+  none: { trail: [], reach: (s: Service) => (s.tick(T - 20_000, v1(T - 20_000)), s.tick(T, v1(T)), T + 20_000) },
+  registered: {
+    trail: ['registered'],
+    reach: (s: Service) => (s.at(T - 60_000, register), s.tick(T - 20_000, v1(T - 20_000)), s.tick(T, v1(T)), T + 20_000),
+  },
+  // Registered after a reported departure with nothing delivered (ADR-040 decision 3); its dwell wakeup is void.
+  left: {
+    trail: ['registered', 'present', 'left'],
+    reach: (s: Service) => {
+      s.at(T - 60_000, register, start);
+      s.at(T - 50_000, end);
+      for (const t of [T - 20_000, T]) s.tick(t, v1(t));
+      return T + 20_000;
+    },
+  },
+  // Its dwell wakeup is at T + 30 s.
+  present: {
+    trail: ['registered', 'present'],
+    reach: (s: Service) => (s.tick(T - 20_000, v1(T - 20_000)), s.tick(T, v1(T)), s.at(T, register, start), T + 20_000),
+  },
+  'present, unattended': {
+    trail: ['registered', 'present', 'unattended'],
+    reach: (s: Service) => (states.present.reach(s), s.at(T, lost), T + 20_000),
+  },
+  // Waiting on its commit wakeup at T + 42.4 s, V1's last report at T + 20 s.
+  eligible: {
+    trail: ['registered', 'present', 'eligible'],
+    reach: (s: Service) => {
+      s.at(T - 60_000, register, start);
+      for (const t of [T - 20_000, T, T + 20_000]) s.tick(t, v1(t));
+      return T + 40_000;
+    },
+  },
+  'eligible, unattended': {
+    trail: ['registered', 'present', 'eligible', 'unattended'],
+    reach: (s: Service) => (states.eligible.reach(s), s.at(T + 20_000, lost), T + 40_000),
+  },
+  // Waiting on its deadline wakeup at T + 72.4 s: V1's last report, at T, was stale at the commit wakeup.
+  'eligible, stale': {
+    trail: ['registered', 'present', 'eligible'],
+    reach: (s: Service) => {
+      s.at(T - 60_000, register, start);
+      for (const t of [T - 20_000, T]) s.tick(t, v1(t));
+      s.at(T + 42_445);
+      return T + 50_000;
+    },
+  },
+  committed: {
+    trail: ['registered', 'present', 'eligible', 'committed'],
+    reach: (s: Service) => (states.eligible.reach(s), s.at(T + 42_445), T + 50_000),
+  },
+  'committed, unattended': {
+    trail: ['registered', 'present', 'eligible', 'committed', 'unattended'],
+    reach: (s: Service) => (states.committed.reach(s), s.at(T + 42_445, lost), T + 50_000),
+  },
+  // The three endings. Withdrawn and Abandoned leave the passenger's presence held; Spent ends it.
+  withdrawn: {
+    trail: ['registered', 'present', 'eligible', 'withdrawn'],
+    reach: (s: Service) => (states.eligible.reach(s), s.at(T + 20_000, cancel), T + 40_000),
+  },
+  spent: {
+    trail: ['registered', 'present', 'eligible', 'committed', 'spent'],
+    reach: (s: Service) => (states.committed.reach(s), s.at(T + 45_000, end), T + 50_000),
+  },
+  abandoned: {
+    trail: ['registered', 'present', 'eligible', 'abandoned stale'],
+    reach: (s: Service) => (states['eligible, stale'].reach(s), s.at(T + 72_445), T + 80_000),
+  },
+};
+type State = keyof typeof states;
+
+// h1's latest wakeup of this purpose: fired at its own instant if that is still to come, else submitted again at E,
+// as a stale one would arrive; a wakeup at E if it never had one.
+const fire = (purpose: 'dwell' | 'commit' | 'deadline') => (s: Service, e: number) => {
+  const w = s.scheduled.findLast(({ event }) => event.kind === 'wakeup' && event.hailId === 'h1' && event.purpose === purpose);
+  if (w && w.at >= e) s.at(w.at);
+  else s.at(e, w?.event ?? { kind: 'wakeup', at: e, hailId: 'h1', purpose });
+};
+const events = {
+  register: (s: Service, e: number) => s.at(e, register),
+  cancel: (s: Service, e: number) => s.at(e, cancel),
+  'presence-start': (s: Service, e: number) => s.at(e, start),
+  'presence-end': (s: Service, e: number) => s.at(e, end),
+  'connection-lost': (s: Service, e: number) => s.at(e, lost),
+  'console-ack': (s: Service, e: number) => s.at(e, { kind: 'console-ack', signalId: 's1' }),
+  tick: (s: Service, e: number) => s.tick(e, v1(e)),
+  // V1 reports 100 m out, inside its stopping distance at the speed its last two reports give.
+  'tick, too close': (s: Service, e: number) => s.tick(e, v1(e, 100)),
+  'wakeup dwell': fire('dwell'),
+  'wakeup commit': fire('commit'),
+  'wakeup deadline': fire('deadline'),
+};
+type Row = [written: string[], rule: string, next?: [act: (s: Service, e: number) => void, written: string[]]] | string;
+
+const DUPLICATE = 'one live hail per handle, stop and route: ADR-032 decision 4; ADR-010, annotated 08-10-2026';
+const ENDED = 'the hail has ended, so nothing names it';
+const NOT_ELIGIBLE = 'only an eligible hail resolves: ADR-039, annotated 07-10-2026; ADR-040 decision 3';
+const NO_ACK_YET = 'what an acknowledgement means is #61\'s: ADR-032 decision 3';
+const STALE_WAKEUP = 'not the wakeup the hail waits for: ADR-040 decisions 2 and 3; ADR-037 decision 1';
+const SAME_PRESENCE = 'presence runs from the first presence-start until a presence-end: ADR-006; ADR-040, annotated 07-10-2026';
+const RECONNECT = 'Does a presence-start while Unattended end Unattended? No record defines how Unattended ends short of a ' +
+  'presence-end, and ADR-031 has no reconnection event; the coordinator keeps it.';
+
+const table: Record<keyof typeof events, Record<State, Row>> = {
+  register: {
+    none: [['registered'], 'ADR-031; ADR-039 decision 1'],
+    registered: [[], DUPLICATE],
+    left: [[], `${DUPLICATE}; the registration stays live, ADR-040 decision 1`],
+    present: [[], DUPLICATE],
+    'present, unattended': [[], DUPLICATE],
+    eligible: [[], DUPLICATE],
+    'eligible, unattended': [[], DUPLICATE],
+    'eligible, stale': [[], DUPLICATE],
+    committed: [[], DUPLICATE],
+    'committed, unattended': [[], `${DUPLICATE}; Unattended never spends it, ADR-010 decision 4`],
+    withdrawn: [['registered', 'present', 'eligible'], 'a new hail, Present and Eligible at once on held presence: ADR-040, annotated and decided 07-10-2026'],
+    spent: [['registered'], 'a new hail; the presence-end that spent the last one ended presence: ADR-010 decision 1'],
+    abandoned: [['registered', 'present', 'eligible'], '"Hail the next 70": ADR-040, decided 07-10-2026; ADR-039'],
+  },
+  cancel: {
+    none: [[], 'nothing to withdraw'],
+    registered: [['withdrawn'], 'FR2; ADR-017, decided 07-10-2026'],
+    left: [['withdrawn'], 'FR2; ADR-017, decided 07-10-2026'],
+    present: [['withdrawn'], 'FR2; ADR-017, decided 07-10-2026'],
+    'present, unattended': [['withdrawn'], 'FR2; ADR-017, decided 07-10-2026'],
+    eligible: [['withdrawn'], 'FR2; ADR-017, decided 07-10-2026', [(s) => s.at(T + 42_445), []]],
+    'eligible, unattended': [['withdrawn'], 'FR2; ADR-017, decided 07-10-2026'],
+    'eligible, stale': [['withdrawn'], 'FR2; ADR-017, decided 07-10-2026'],
+    committed: [['withdrawn'], 'FR2; the signal stays until #38 retracts it'],
+    'committed, unattended': [['withdrawn'], 'FR2; the signal stays until #38 retracts it'],
+    withdrawn: [[], ENDED],
+    spent: [[], ENDED],
+    abandoned: [[], ENDED],
+  },
+  'presence-start': {
+    none: [[], 'presence is held for a later register: ADR-040, annotated 07-10-2026', [(s, e) => s.at(e + 1_000, register), ['registered', 'present']]],
+    registered: [['present'], 'FR4; ADR-041 decision 1'],
+    left: [['returned'], 'a fresh dwell and the skip on return: ADR-040 decision 2, decided 07-10-2026', [(s, e) => s.at(e + 30_000), ['eligible']]],
+    present: [[], SAME_PRESENCE, [(s) => s.at(T + 30_000), ['eligible']]],
+    'present, unattended': RECONNECT,
+    eligible: [[], SAME_PRESENCE],
+    'eligible, unattended': RECONNECT,
+    'eligible, stale': [[], SAME_PRESENCE],
+    committed: [[], SAME_PRESENCE],
+    'committed, unattended': RECONNECT,
+    withdrawn: [[], `${ENDED}; ${SAME_PRESENCE}`, [(s, e) => s.at(e + 1_000, register), ['registered', 'present', 'eligible']]],
+    spent: [[], 'returning fires nothing: ADR-010 decision 1', [(s, e) => s.at(e + 1_000, register), ['registered', 'present']]],
+    abandoned: [[], `${ENDED}; ${SAME_PRESENCE}`],
+  },
+  'presence-end': {
+    none: [[], 'no hail and no presence'],
+    registered: [[], 'nothing to depart from, and only cancel withdraws: ADR-010 decision 2; ADR-017, decided 07-10-2026'],
+    left: [[], 'already Registered: ADR-040 decision 3'],
+    present: [['left'], 'back to Registered: ADR-040 decision 3'],
+    'present, unattended': [['left'], 'back to Registered, the departure reported: ADR-040 decisions 3 and 5'],
+    eligible: [['left'], 'back to Registered, uncommitted: ADR-040 decision 3', [(s) => s.at(T + 42_445), []]],
+    'eligible, unattended': [['left'], 'back to Registered, the departure reported: ADR-040 decisions 3 and 5'],
+    'eligible, stale': [['left'], 'back to Registered, uncommitted: ADR-040 decision 3', [(s) => s.at(T + 72_445), []]],
+    committed: [['spent'], 'FR13; ADR-010 decision 1'],
+    'committed, unattended': [['spent'], 'ADR-010, annotated 08-10-2026'],
+    withdrawn: [[], `${ENDED}; presence ends`, [(s, e) => s.at(e + 1_000, register), ['registered']]],
+    spent: [[], ENDED],
+    abandoned: [[], `${ENDED}; presence ends`],
+  },
+  'connection-lost': {
+    none: [[], 'no hail'],
+    registered: [[], 'Unattended applies at the stop only: ADR-010, annotated 07-10-2026'],
+    left: [[], 'stays Registered, uncommitted: ADR-040 decision 5', [(s) => s.at(T + 80_000), []]],
+    present: [['unattended'], 'ADR-010 decision 3; ADR-040 decision 5'],
+    'present, unattended': [[], 'already Unattended: ADR-017, one record per transition'],
+    eligible: [['unattended'], 'ADR-010 decision 3', [(s) => s.at(T + 42_445), ['committed']]],
+    'eligible, unattended': [[], 'already Unattended: ADR-017, one record per transition'],
+    'eligible, stale': [['unattended'], 'ADR-010 decision 3'],
+    committed: [['unattended'], 'a committed hail is not withdrawn: ADR-010 decision 3'],
+    'committed, unattended': [[], 'already Unattended: ADR-017, one record per transition'],
+    withdrawn: [[], ENDED],
+    spent: [[], ENDED],
+    abandoned: [[], ENDED],
+  },
+  'console-ack': {
+    none: [[], NO_ACK_YET],
+    registered: [[], NO_ACK_YET],
+    left: [[], NO_ACK_YET],
+    present: [[], NO_ACK_YET],
+    'present, unattended': [[], NO_ACK_YET],
+    eligible: [[], NO_ACK_YET],
+    'eligible, unattended': [[], NO_ACK_YET],
+    'eligible, stale': [[], NO_ACK_YET],
+    committed: [[], NO_ACK_YET],
+    'committed, unattended': [[], NO_ACK_YET],
+    withdrawn: [[], NO_ACK_YET],
+    spent: [[], NO_ACK_YET],
+    abandoned: [[], NO_ACK_YET],
+  },
+  tick: {
+    none: [[], 'no hail'],
+    registered: [[], NOT_ELIGIBLE],
+    left: [[], NOT_ELIGIBLE],
+    present: [[], NOT_ELIGIBLE],
+    'present, unattended': [[], NOT_ELIGIBLE],
+    eligible: [[], 'the commit instant is still to come: ADR-037 decision 1'],
+    'eligible, unattended': [[], 'the commit instant is still to come: ADR-037 decision 1'],
+    'eligible, stale': [['committed'], 'a fresh report past the commit instant commits at once: ADR-023; ADR-037 decision 1'],
+    committed: [[], 'a committed hail does not re-resolve until #38: ADR-037, annotated 08-10-2026'],
+    'committed, unattended': [[], 'a committed hail does not re-resolve until #38: ADR-037, annotated 08-10-2026'],
+    withdrawn: [[], ENDED],
+    spent: [[], ENDED],
+    abandoned: [[], ENDED],
+  },
+  'tick, too close': {
+    none: [[], 'no hail'],
+    registered: [[], NOT_ELIGIBLE],
+    left: [[], NOT_ELIGIBLE],
+    present: [[], NOT_ELIGIBLE],
+    'present, unattended': [[], NOT_ELIGIBLE],
+    eligible: [['abandoned deadline'], 'the bus it resolved to: ADR-039 decision 3'],
+    'eligible, unattended': [['abandoned deadline'], 'the bus it resolved to: ADR-039 decision 3; ADR-010 decision 3'],
+    'eligible, stale': [['abandoned deadline'], 'a stale pick is resolved to: ADR-039, annotated 08-10-2026'],
+    committed: [[], 'a committed hail does not re-resolve until #38: ADR-037, annotated 08-10-2026'],
+    'committed, unattended': [[], 'a committed hail does not re-resolve until #38: ADR-037, annotated 08-10-2026'],
+    withdrawn: [[], ENDED],
+    spent: [[], ENDED],
+    abandoned: [[], ENDED],
+  },
+  'wakeup dwell': {
+    none: [[], 'no hail'],
+    registered: [[], STALE_WAKEUP],
+    left: [[], `void since the departure: ${STALE_WAKEUP}`],
+    present: [['eligible'], 'FR4; ADR-041 decision 1'],
+    'present, unattended': [['eligible'], 'an uncommitted hail carries on: ADR-010 decision 3; ADR-041 decision 1'],
+    eligible: [[], STALE_WAKEUP],
+    'eligible, unattended': [[], STALE_WAKEUP],
+    'eligible, stale': [[], STALE_WAKEUP],
+    committed: [[], STALE_WAKEUP],
+    'committed, unattended': [[], STALE_WAKEUP],
+    withdrawn: [[], ENDED],
+    spent: [[], ENDED],
+    abandoned: [[], ENDED],
+  },
+  'wakeup commit': {
+    none: [[], 'no hail'],
+    registered: [[], STALE_WAKEUP],
+    left: [[], STALE_WAKEUP],
+    present: [[], STALE_WAKEUP],
+    'present, unattended': [[], STALE_WAKEUP],
+    eligible: [['committed'], 'ADR-037 decision 1'],
+    'eligible, unattended': [['committed'], 'an uncommitted hail still commits: ADR-010 decision 3'],
+    'eligible, stale': [[], STALE_WAKEUP],
+    committed: [[], `one signal per hail until #35; ${STALE_WAKEUP}`],
+    'committed, unattended': [[], `one signal per hail until #35; ${STALE_WAKEUP}`],
+    withdrawn: [[], ENDED],
+    spent: [[], ENDED],
+    abandoned: [[], ENDED],
+  },
+  'wakeup deadline': {
+    none: [[], 'no hail'],
+    registered: [[], STALE_WAKEUP],
+    left: [[], STALE_WAKEUP],
+    present: [[], STALE_WAKEUP],
+    'present, unattended': [[], STALE_WAKEUP],
+    eligible: [[], STALE_WAKEUP],
+    'eligible, unattended': [[], STALE_WAKEUP],
+    'eligible, stale': [['abandoned stale'], 'still stale at its deadline: ADR-023, decided 07-10-2026'],
+    committed: [[], STALE_WAKEUP],
+    'committed, unattended': [[], STALE_WAKEUP],
+    withdrawn: [[], ENDED],
+    spent: [[], ENDED],
+    abandoned: [[], ENDED],
+  },
+};
+
+// A record's kind, with the reason an abandonment gives.
+const outcome = ({ kind, payload }: DecisionRecord) => (payload.reason ? `${kind} ${payload.reason}` : kind);
+
+describe('T2: every lifecycle state against every event (#33)', () => {
+  it.each(Object.entries(states))('reaches %s', (_, { trail, reach }) => {
+    const s = service();
+    reach(s);
+    expect(s.records.map(outcome)).toEqual(trail);
+  });
+
+  for (const [event, row] of Object.entries(table)) {
+    describe(event, () => {
+      for (const [state, cell] of Object.entries(row)) {
+        if (typeof cell === 'string') {
+          it.todo(`${state}: ${cell}`);
+          continue;
+        }
+        const [written, rule, next] = cell;
+        it(`${state} writes [${written.join(', ')}]: ${rule}`, () => {
+          const s = service();
+          const e = states[state as State].reach(s);
+          // Every commit hands SignalPort one signal (#32); the harness throws on a retraction, which is #38's.
+          const step = (act: (s: Service, e: number) => void) => {
+            const [records, signals] = [s.records.length, s.signals.length];
+            act(s, e);
+            const added = s.records.slice(records);
+            expect(s.signals.length - signals).toBe(added.filter((r) => r.kind === 'committed').length);
+            return added.map(outcome);
+          };
+          expect(step(events[event as keyof typeof events])).toEqual(written);
+          if (next) expect(step(next[0])).toEqual(next[1]);
+        });
+      }
+    });
+  }
+});
