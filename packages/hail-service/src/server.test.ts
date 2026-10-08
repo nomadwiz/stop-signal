@@ -107,10 +107,10 @@ describe('hailServer, the driver console routes', () => {
     const response = await fetch(`${base}/signals`);
     const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
 
-    channel.signal({ id: 's1', vehicleId: 'v7', stopId: '7177-4660a5ff' });
+    channel.signal({ id: 's1', vehicleId: 'v7', stopId: '7177-4660a5ff', deadline: 1_790_000_022_444, waiting: 2 });
 
     expect(response.headers.get('content-type')).toBe('text/event-stream');
-    expect((await reader.read()).value).toBe('event: signal\ndata: {"id":"s1","vehicleId":"v7","stopId":"7177-4660a5ff"}\n\n');
+    expect((await reader.read()).value).toBe('event: signal\ndata: {"id":"s1","vehicleId":"v7","stopId":"7177-4660a5ff","deadline":1790000022444,"waiting":2}\n\n');
   });
 
   it.each([

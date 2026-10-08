@@ -34,7 +34,7 @@ async function events(response: Response, count: number): Promise<{ event: strin
     });
 }
 
-const signal = { id: 's1', vehicleId: 'v7', stopId: '7177-4660a5ff' };
+const signal = { id: 's1', vehicleId: 'v7', stopId: '7177-4660a5ff', deadline: 1_790_000_022_444, waiting: 2 };
 
 describe('driverChannel', () => {
   it('streams a signal and then its retraction to a connected console, in that order', async () => {
