@@ -823,6 +823,10 @@ const events = {
 };
 type Row = [written: string[], rule: string, next?: [act: (s: Service, e: number) => void, written: string[]]] | string;
 
+const WITHDRAWS = 'FR2; ADR-017, decided 07-10-2026';
+const NO_HAIL = 'no hail';
+const NO_RERESOLVE = 'a committed hail does not re-resolve until #38: ADR-037, annotated 08-10-2026';
+const ALREADY_UNATTENDED = 'already Unattended: ADR-017, one record per transition';
 const DUPLICATE = 'one live hail per handle, stop and route: ADR-032 decision 4; ADR-010, annotated 08-10-2026';
 const ENDED = 'the hail has ended, so nothing names it';
 const NOT_ELIGIBLE = 'only an eligible hail resolves: ADR-039, annotated 07-10-2026; ADR-040 decision 3';
@@ -850,13 +854,13 @@ const table: Record<keyof typeof events, Record<State, Row>> = {
   },
   cancel: {
     none: [[], 'nothing to withdraw'],
-    registered: [['withdrawn'], 'FR2; ADR-017, decided 07-10-2026'],
-    left: [['withdrawn'], 'FR2; ADR-017, decided 07-10-2026'],
-    present: [['withdrawn'], 'FR2; ADR-017, decided 07-10-2026'],
-    'present, unattended': [['withdrawn'], 'FR2; ADR-017, decided 07-10-2026'],
-    eligible: [['withdrawn'], 'FR2; ADR-017, decided 07-10-2026', [(s) => s.at(T + 42_445), []]],
-    'eligible, unattended': [['withdrawn'], 'FR2; ADR-017, decided 07-10-2026'],
-    'eligible, stale': [['withdrawn'], 'FR2; ADR-017, decided 07-10-2026'],
+    registered: [['withdrawn'], WITHDRAWS],
+    left: [['withdrawn'], WITHDRAWS],
+    present: [['withdrawn'], WITHDRAWS],
+    'present, unattended': [['withdrawn'], WITHDRAWS],
+    eligible: [['withdrawn'], WITHDRAWS, [(s) => s.at(T + 42_445), []]],
+    'eligible, unattended': [['withdrawn'], WITHDRAWS],
+    'eligible, stale': [['withdrawn'], WITHDRAWS],
     committed: [['withdrawn'], 'FR2; the signal stays until #38 retracts it'],
     'committed, unattended': [['withdrawn'], 'FR2; the signal stays until #38 retracts it'],
     withdrawn: [[], ENDED],
@@ -894,16 +898,16 @@ const table: Record<keyof typeof events, Record<State, Row>> = {
     abandoned: [[], `${ENDED}; presence ends`],
   },
   'connection-lost': {
-    none: [[], 'no hail'],
+    none: [[], NO_HAIL],
     registered: [[], 'Unattended applies at the stop only: ADR-010, annotated 07-10-2026'],
     left: [[], 'stays Registered, uncommitted: ADR-040 decision 5', [(s) => s.at(T + 80_000), []]],
     present: [['unattended'], 'ADR-010 decision 3; ADR-040 decision 5'],
-    'present, unattended': [[], 'already Unattended: ADR-017, one record per transition'],
+    'present, unattended': [[], ALREADY_UNATTENDED],
     eligible: [['unattended'], 'ADR-010 decision 3', [(s) => s.at(T + 42_445), ['committed']]],
-    'eligible, unattended': [[], 'already Unattended: ADR-017, one record per transition'],
+    'eligible, unattended': [[], ALREADY_UNATTENDED],
     'eligible, stale': [['unattended'], 'ADR-010 decision 3'],
     committed: [['unattended'], 'a committed hail is not withdrawn: ADR-010 decision 3'],
-    'committed, unattended': [[], 'already Unattended: ADR-017, one record per transition'],
+    'committed, unattended': [[], ALREADY_UNATTENDED],
     withdrawn: [[], ENDED],
     spent: [[], ENDED],
     abandoned: [[], ENDED],
@@ -924,7 +928,7 @@ const table: Record<keyof typeof events, Record<State, Row>> = {
     abandoned: [[], NO_ACK_YET],
   },
   tick: {
-    none: [[], 'no hail'],
+    none: [[], NO_HAIL],
     registered: [[], NOT_ELIGIBLE],
     left: [[], NOT_ELIGIBLE],
     present: [[], NOT_ELIGIBLE],
@@ -932,14 +936,14 @@ const table: Record<keyof typeof events, Record<State, Row>> = {
     eligible: [[], 'the commit instant is still to come: ADR-037 decision 1'],
     'eligible, unattended': [[], 'the commit instant is still to come: ADR-037 decision 1'],
     'eligible, stale': [['committed'], 'a fresh report past the commit instant commits at once: ADR-023; ADR-037 decision 1'],
-    committed: [[], 'a committed hail does not re-resolve until #38: ADR-037, annotated 08-10-2026'],
-    'committed, unattended': [[], 'a committed hail does not re-resolve until #38: ADR-037, annotated 08-10-2026'],
+    committed: [[], NO_RERESOLVE],
+    'committed, unattended': [[], NO_RERESOLVE],
     withdrawn: [[], ENDED],
     spent: [[], ENDED],
     abandoned: [[], ENDED],
   },
   'tick, too close': {
-    none: [[], 'no hail'],
+    none: [[], NO_HAIL],
     registered: [[], NOT_ELIGIBLE],
     left: [[], NOT_ELIGIBLE],
     present: [[], NOT_ELIGIBLE],
@@ -947,14 +951,14 @@ const table: Record<keyof typeof events, Record<State, Row>> = {
     eligible: [['abandoned deadline'], 'the bus it resolved to: ADR-039 decision 3'],
     'eligible, unattended': [['abandoned deadline'], 'the bus it resolved to: ADR-039 decision 3; ADR-010 decision 3'],
     'eligible, stale': [['abandoned deadline'], 'a stale pick is resolved to: ADR-039, annotated 08-10-2026'],
-    committed: [[], 'a committed hail does not re-resolve until #38: ADR-037, annotated 08-10-2026'],
-    'committed, unattended': [[], 'a committed hail does not re-resolve until #38: ADR-037, annotated 08-10-2026'],
+    committed: [[], NO_RERESOLVE],
+    'committed, unattended': [[], NO_RERESOLVE],
     withdrawn: [[], ENDED],
     spent: [[], ENDED],
     abandoned: [[], ENDED],
   },
   'wakeup dwell': {
-    none: [[], 'no hail'],
+    none: [[], NO_HAIL],
     registered: [[], STALE_WAKEUP],
     left: [[], `void since the departure: ${STALE_WAKEUP}`],
     present: [['eligible'], 'FR4; ADR-041 decision 1'],
@@ -969,7 +973,7 @@ const table: Record<keyof typeof events, Record<State, Row>> = {
     abandoned: [[], ENDED],
   },
   'wakeup commit': {
-    none: [[], 'no hail'],
+    none: [[], NO_HAIL],
     registered: [[], STALE_WAKEUP],
     left: [[], STALE_WAKEUP],
     present: [[], STALE_WAKEUP],
@@ -984,7 +988,7 @@ const table: Record<keyof typeof events, Record<State, Row>> = {
     abandoned: [[], ENDED],
   },
   'wakeup deadline': {
-    none: [[], 'no hail'],
+    none: [[], NO_HAIL],
     registered: [[], STALE_WAKEUP],
     left: [[], STALE_WAKEUP],
     present: [[], STALE_WAKEUP],
