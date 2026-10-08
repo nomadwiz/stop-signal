@@ -76,7 +76,7 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
   let signalCount = 0;
   // C5 (#41): the feed is stale once the Clock is more than one feed interval past the last tick, ADR-022 decision 3's
   // strict >, so a tick exactly one interval on is on time. The next tick ends it, and before the first tick, with
-  // lastTickAt at Infinity, it is not stale (ADR-017 and ADR-038, decided 09-10-2026).
+  // lastTickAt at Infinity, it is not stale (ADR-017 and ADR-038, annotated 09-10-2026).
   let lastTickAt = Infinity;
   const tripOf = (r: VehicleReport) => (r.startDate === timetable.previousDay ? timetable.lateTrips : timetable.trips).get(r.tripId ?? '');
 
@@ -86,8 +86,8 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
     note(h, kind, payload, vehicleId);
     hails.delete(h.id);
   };
-  // A stale feed ends the hail in cannot hail, naming the vehicle it last resolved to, if any (ADR-017, decided
-  // 09-10-2026). A committed hail's signal stays on the console until #38 retracts it (ADR-038, decided 09-10-2026).
+  // A stale feed ends the hail in cannot hail, naming the vehicle it last resolved to, if any (ADR-017, annotated
+  // 09-10-2026). A committed hail's signal stays on the console until #38 retracts it (ADR-038, annotated 09-10-2026).
   const abandonOnFeed = (h: Hail) => end(h, 'abandoned', { reason: 'feed' }, h.resolvedTo ? JSON.parse(h.resolvedTo)[0] : null);
   const wake = (h: Hail, purpose: Purpose, at: number) => {
     if (h.wake?.at === at && h.wake.purpose === purpose) return;

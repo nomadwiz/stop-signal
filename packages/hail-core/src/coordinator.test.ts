@@ -824,7 +824,7 @@ describe('hailCoordinator: a lost connection and a spent registration (ADR-010, 
 });
 
 // C5 (#41; FR14, QR7): the feed is stale once the Clock is more than one feed interval past the last tick, and the next
-// tick ends it (ADR-022 decision 3; ADR-017 and ADR-038, decided 09-10-2026).
+// tick ends it (ADR-022 decision 3; ADR-017 and ADR-038, annotated 09-10-2026).
 describe('hailCoordinator: a stale feed (#41)', () => {
   const other = (handle: string, e: HailEvent) => ({ ...e, handle }) as HailEvent;
 
@@ -1008,7 +1008,7 @@ const NOT_ELIGIBLE = 'only an eligible hail resolves: ADR-039, annotated 07-10-2
 const NO_ACK_YET = 'what an acknowledgement means is #61\'s: ADR-032 decision 3';
 const STALE_WAKEUP = 'not the wakeup the hail waits for: ADR-040 decisions 2 and 3; ADR-037 decision 1';
 const SAME_PRESENCE = 'presence runs from the first presence-start until a presence-end: ADR-006; ADR-040, annotated 07-10-2026';
-const FEED_RULE = 'ADR-017 and ADR-038, decided 09-10-2026';
+const FEED_RULE = 'ADR-017 and ADR-038, annotated 09-10-2026';
 const FEED = `a stale feed abandons every live hail: ${FEED_RULE}`;
 const RECONNECT = 'Does a presence-start while Unattended end Unattended? No record defines how Unattended ends short of a ' +
   'presence-end, and ADR-031 has no reconnection event; the coordinator keeps it.';
