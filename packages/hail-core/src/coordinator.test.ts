@@ -295,7 +295,9 @@ describe('hailCoordinator: aggregation (#35)', () => {
     const deadlines = committed(s).map((r) => r.payload.deadline as number);
     expect(deadlines.map((d) => Math.round((d - T) / 100) / 10)).toEqual([22.4, 31.1, 18, 22.4, 28.8]);
     expect(committed(s).map((r) => r.payload.signalId)).toEqual(['s1', 's1', 's1', 's1', 's1']);
-    expect(s.signals.at(-1)).toEqual({ id: 's1', vehicleId: 'V1', stopId: 'S', deadline: Math.min(...deadlines), waiting: 5 });
+    expect(s.signals.at(-1)).toEqual({
+      id: 's1', vehicleId: 'V1', tripId: 'A1', routeId: 'R', stopId: 'S', at: T, distanceM: expect.closeTo(135, 0), deadline: Math.min(...deadlines), waiting: 5,
+    });
   });
 
   it('moves the signal earlier when a later hail commits on a tighter deadline, and never later on a looser one', () => {
@@ -303,11 +305,16 @@ describe('hailCoordinator: aggregation (#35)', () => {
     s.at(T - 60_000, ...arrived(1, 2, 3));
     moves(s, T - 10_000, 400);
     moves(s, T, 300, ...hails(1));
-    expect(s.signals).toEqual([{ id: 's1', vehicleId: 'V1', stopId: 'S', deadline: expect.closeTo(T + 22_444, -1), waiting: 1 }]);
+    expect(s.signals).toEqual([{
+      id: 's1', vehicleId: 'V1', tripId: 'A1', routeId: 'R', stopId: 'S', at: T, distanceM: expect.closeTo(300, 0), deadline: expect.closeTo(T + 22_444, -1), waiting: 1,
+    }]);
 
     // V1 speeds up to 12 m/s, 180 m out: its deadline comes forward to T + 16.3 s.
     moves(s, T + 10_000, 180, ...hails(2));
-    expect(s.signals.at(-1)).toEqual({ id: 's1', vehicleId: 'V1', stopId: 'S', deadline: expect.closeTo(T + 16_333, -1), waiting: 2 });
+    // The signal keeps the instant it was first sent, and takes the distance at the latest join.
+    expect(s.signals.at(-1)).toEqual({
+      id: 's1', vehicleId: 'V1', tripId: 'A1', routeId: 'R', stopId: 'S', at: T, distanceM: expect.closeTo(180, 0), deadline: expect.closeTo(T + 16_333, -1), waiting: 2,
+    });
 
     // V1 slows to 8 m/s, 140 m out: its deadline goes back to T + 26.1 s, and the signal keeps T + 16.3 s.
     moves(s, T + 15_000, 140, ...hails(3));

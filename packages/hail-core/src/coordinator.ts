@@ -174,7 +174,7 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
       // At speed 0 no deadline follows; a stopped vehicle within reach is due at once, and one beyond waits for its next
       // report (ADR-037's [DECIDED:05-10-2026]).
       if (p.speedMps === 0) {
-        if (p.distanceM <= reach(p.report, h.stopId)) commit(h, p.report, null);
+        if (p.distanceM <= reach(p.report, h.stopId)) commit(h, p, null, now);
         return;
       }
       // Inside its stopping distance: abandoned if the hail had resolved to it, not passed to the next bus (ADR-039
@@ -186,7 +186,7 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
         note(h, 'skipped', { candidates: [vehicleId] });
         continue;
       }
-      if (now >= d.deadline - FEED_INTERVAL_MS) commit(h, p.report, d.deadline);
+      if (now >= d.deadline - FEED_INTERVAL_MS) commit(h, p, d.deadline, now);
       else wake(h, 'commit', d.deadline - FEED_INTERVAL_MS);
       return;
     }
@@ -196,14 +196,16 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
   // earliest of all (product.md §4 step 6). Committed is Delivered: re-resolving and retracting are #38's.
   // ponytail: a signal stays here until #38 retracts it, so this holds every signal the service day sends.
   const live = new Map<string, Signal>();
-  const commit = (h: Hail, report: VehicleReport, deadline: number | null) => {
+  // The signal keeps when it was first sent, and takes the predicted distance at its latest commit or join (ADR-038,
+  // decided 09-10-2026). A calling report always names its trip (callingAt).
+  const commit = (h: Hail, { report, distanceM }: { report: VehicleReport; distanceM: number }, deadline: number | null, now: number) => {
     h.state = 'committed';
     h.wake = undefined;
     const place = JSON.stringify([run(report), h.stopId]);
     const was = live.get(place);
     const signal: Signal = was
-      ? { ...was, deadline: was.deadline === null || deadline === null ? null : Math.min(was.deadline, deadline), waiting: was.waiting + 1 }
-      : { id: `s${++signalCount}`, vehicleId: report.vehicleId, stopId: h.stopId, deadline, waiting: 1 };
+      ? { ...was, distanceM, deadline: was.deadline === null || deadline === null ? null : Math.min(was.deadline, deadline), waiting: was.waiting + 1 }
+      : { id: `s${++signalCount}`, vehicleId: report.vehicleId, tripId: report.tripId!, routeId: h.routeId, stopId: h.stopId, at: now, distanceM, deadline, waiting: 1 };
     live.set(place, signal);
     note(h, 'committed', { deadline, signalId: signal.id }, report.vehicleId);
     signals.signal(signal);
