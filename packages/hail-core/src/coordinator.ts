@@ -1,6 +1,6 @@
 // C2: runs each hail through its lifecycle state machine, from register to commit (#32, FR7, FR13; Milestone 2's
-// Figure 5.4). One function applies every event the loop hands it, in queue order (ADR-002), and writes exactly one
-// decision record per transition (ADR-017).
+// Figure 5.4), and C5's watchdog, which ends every live hail on a stale feed (#41, FR14). One function applies every
+// event the loop hands it, in queue order (ADR-002), and writes exactly one decision record per transition (ADR-017).
 import type { Clock } from './clock.ts';
 import { signalDeadline } from './deadline.ts';
 import type { HailEvent } from './events.ts';
@@ -37,7 +37,7 @@ interface Hail {
   resolvedTo?: string;
   wake?: { at: number; purpose: Purpose };
 }
-type Purpose = Extract<HailEvent, { kind: 'wakeup' }>['purpose'];
+type Purpose = Extract<HailEvent, { kind: 'wakeup'; hailId: string }>['purpose'];
 
 // A vehicle run: one vehicle on one trip on one service day (ADR-025).
 const run = ({ vehicleId, tripId, startDate }: VehicleReport) => JSON.stringify([vehicleId, tripId, startDate]);
@@ -74,6 +74,10 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
   const SILENT_MS = 3 * FEED_INTERVAL_MS;
   const runs = new Map<string, { key: string; previous?: VehicleReport; previousAlongM?: number; latest: VehicleReport; latestAlongM: number }>();
   let signalCount = 0;
+  // C5 (#41): the feed is stale once the Clock is more than one feed interval past the last tick, ADR-022 decision 3's
+  // strict >, so a tick exactly one interval on is on time. The next tick ends it, and before the first tick, with
+  // lastTickAt at Infinity, it is not stale (ADR-017 and ADR-038, annotated 09-10-2026).
+  let lastTickAt = Infinity;
   const tripOf = (r: VehicleReport) => (r.startDate === timetable.previousDay ? timetable.lateTrips : timetable.trips).get(r.tripId ?? '');
 
   const note = (h: Hail, kind: string, payload: { [key: string]: Json } = {}, vehicleId: string | null = null) =>
@@ -82,6 +86,9 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
     note(h, kind, payload, vehicleId);
     hails.delete(h.id);
   };
+  // A stale feed ends the hail in cannot hail, naming the vehicle it last resolved to, if any (ADR-017, annotated
+  // 09-10-2026). A committed hail's signal stays on the console until #38 retracts it (ADR-038, annotated 09-10-2026).
+  const abandonOnFeed = (h: Hail) => end(h, 'abandoned', { reason: 'feed' }, h.resolvedTo ? JSON.parse(h.resolvedTo)[0] : null);
   const wake = (h: Hail, purpose: Purpose, at: number) => {
     if (h.wake?.at === at && h.wake.purpose === purpose) return;
     h.wake = { at, purpose };
@@ -226,6 +233,8 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
         const h: Hail = { id: `h${++hailCount}`, handle, stopId, routeId, state: 'registered', left: false, unattended: false, skipped: new Set() };
         hails.set(h.id, h);
         note(h, 'registered', { stopId, routeId, leadTimeS });
+        // No hail lives while the feed is stale, so nothing predicts on it (#41; FR14).
+        if (now - lastTickAt > FEED_INTERVAL_MS) return abandonOnFeed(h);
         skip(h, now);
         const since = presence.get(here(h));
         if (since !== undefined) arrive(h, 'present', since, now);
@@ -270,6 +279,12 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
         return;
       }
       case 'wakeup': {
+        // C5's watchdog: once the feed is stale, every live hail ends at once (FR14, QR7). Only the one the latest tick
+        // set acts, so it fires in clock order with the hails' own wakeups; one a later tick replaced does nothing.
+        if (event.purpose === 'feed') {
+          if (event.at === lastTickAt + FEED_INTERVAL_MS + 1) for (const h of hails.values()) abandonOnFeed(h);
+          return;
+        }
         // Only the wakeup the hail now waits for acts; one a later event replaced does nothing.
         const h = hails.get(event.hailId);
         if (h?.wake?.at !== event.at || h.wake.purpose !== event.purpose) return;
@@ -279,6 +294,10 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
         return;
       }
       case 'tick': {
+        // Each tick sets the watchdog for the first instant the feed would be stale without another.
+        lastTickAt = now;
+        const at = now + FEED_INTERVAL_MS + 1;
+        schedule(at, { kind: 'wakeup', at, purpose: 'feed' });
         for (const r of event.reports) {
           const shape = timetable.shapes.get(tripOf(r)?.shapeId ?? '');
           const known = runs.get(r.vehicleId);
