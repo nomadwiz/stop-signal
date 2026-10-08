@@ -3,6 +3,10 @@
 
 import type { Fix } from './predict.ts';
 
+// Calibration value: how close a vehicle's path must come to a stop to count as calling there (ADR-018 decision 5).
+// The oracle's radius, and the margin ADR-037's stopped-vehicle rule adds to the previous stop's distance.
+export const CALL_RADIUS_M = 50;
+
 // A live vehicle record as C7 hands it in. It has no route field: AT says the vehicle identifier
 // "should not be used to deduce routes", so route identity is reached only through the trip.
 // As a Fix it carries the position and the instant the vehicle measured it, under Fix's names, which predict reads (ADR-029).

@@ -13,10 +13,9 @@ import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gunzipSync } from 'node:zlib';
 import bindings from 'gtfs-realtime-bindings';
+import { CALL_RADIUS_M } from '../../hail-core/src/resolve.ts';
 import { loadServiceDay, type StaticIndex } from './gtfs-static.ts';
 
-// Calibration value: how close a vehicle's path must come to a stop to count as calling there.
-export const CALL_RADIUS_M = 50;
 // One capture poll: a call agrees with AT's observed time when within this.
 export const TOLERANCE_MS = 20_000;
 
