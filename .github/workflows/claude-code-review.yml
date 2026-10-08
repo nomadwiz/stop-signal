@@ -98,6 +98,12 @@ jobs:
       - name: Remove any verdict the pull request carries
         run: rm -f verdict.json
 
+      # Scrubbing (CLAUDE_CODE_SUBPROCESS_ENV_SCRUB above) runs each command the
+      # model issues inside bubblewrap, and Claude Code refuses to install without
+      # it. ubuntu-latest does not ship it.
+      - name: Install bubblewrap for the scrub
+        run: sudo apt-get update -q && sudo apt-get install -yq bubblewrap
+
       - name: Review
         uses: anthropics/claude-code-action@v1
         with:
