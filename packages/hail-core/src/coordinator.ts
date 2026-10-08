@@ -133,7 +133,7 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
   };
 
   // Metres along the report's trip shape from the trip's stop before stopId to stopId, plus CALL_RADIUS_M; -1 when stopId
-  // is the trip's first stop, so no stopped vehicle on it is due (ADR-037's [DECIDED:05-10-2026]). m1.ts's reach.
+  // is the trip's first stop, so no stopped vehicle on it is due (ADR-037's [DECIDED:05-10-2026]).
   // ponytail: places that stop by predict at speed 0, nearest over the whole shape, as predict places stopId itself.
   const reach = (r: VehicleReport, stopId: string) => {
     const trip = tripOf(r)!;

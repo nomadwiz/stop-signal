@@ -49,7 +49,7 @@ export function rank(calls: Call[], index: StaticIndex, windowMs: number): { sto
 }
 
 // The D windows a CLI names, in seconds, from its comma-separated argument. Exits when from-ms, to-ms or any D is
-// not a positive number. Shared by the CLIs of queued-arrivals.ts, scenarios.ts and m1.ts.
+// not a positive number. Shared by the CLIs of queued-arrivals.ts and scenarios.ts.
 export function windowsArg(from: string, to: string, windows: string): number[] {
   const ds = windows.split(',').map(Number);
   if (![Number(from), Number(to), ...ds].every((x) => Number.isFinite(x) && x > 0)) {

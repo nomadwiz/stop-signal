@@ -8,7 +8,7 @@ import { recorder, type DecisionRecord } from './trace.ts';
 
 const T = 1_790_000_000_000;
 const DAY = '20261003';
-// m1.test.ts's straight road east along one latitude. Stop S lies 1,335 m along it, and its previous stop P 356 m
+// A straight road east along one latitude. Stop S lies 1,335 m along it, and its previous stop P 356 m
 // before S, so a stopped vehicle is due within 356 + 50 = 406 m (ADR-037's [DECIDED:05-10-2026] on a stopped vehicle).
 const LAT = -36.85;
 const M_PER_DEGREE = 6_371_000 * (Math.PI / 180);
