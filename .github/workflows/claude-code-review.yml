@@ -24,9 +24,9 @@
 #   CLAUDE_CODE_OAUTH_TOKEN       the Claude Code subscription token
 #   STOP_SIGNAL_CROSS_REPO_TOKEN  a fine-grained personal access token with
 #                                 Contents: read on nomadwiz/stop-signal and
-#                                 nomadwiz/stop-signal-doc. Both repositories are
-#                                 private, so the default GITHUB_TOKEN cannot read
-#                                 the other one.
+#                                 nomadwiz/stop-signal-doc. The documents
+#                                 repository is private, so the default
+#                                 GITHUB_TOKEN cannot read it.
 
 name: Claude Code Review
 
