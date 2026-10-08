@@ -6,9 +6,10 @@
 // Usage: node packages/hail-service/src/m1.ts
 //   Reads every N = 1 scenario under packages/replay/scenarios/ and its decision log under packages/replay/expected/,
 //   which `npm run replay:check` holds to the replay, and prints for each D the table `| Class | Calls | M1 |`.
-import { readdirSync, readFileSync, realpathSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { DecisionRecord } from '../../hail-core/src/trace.ts';
+import { replayRuns } from './replay-runs.ts';
 import type { Scenario } from './scenarios.ts';
 
 // One hail as its decision log tells it: its route and the call its passengers want (ADR-035 decision 3), when it was
@@ -84,12 +85,8 @@ export function dwell(hs: readonly Hail[]) {
 }
 
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const replay = (path: string) => fileURLToPath(new URL(`../../replay/${path}`, import.meta.url));
   const share = ({ calls: n, right }: Tally) => `${right} / ${n} = ${n ? ((100 * right) / n).toFixed(1) : '—'}%`;
-  for (const d of readdirSync(replay('scenarios')).sort((a, b) => Number(b.slice(1)) - Number(a.slice(1)))) {
-    const files = readdirSync(replay(`scenarios/${d}`)).filter((f) => f.endsWith('-n1.json')).sort();
-    const built: Scenario[] = files.map((f) => JSON.parse(readFileSync(replay(`scenarios/${d}/${f}`), 'utf8')));
-    const logs = files.map((f) => readFileSync(replay(`expected/${d}/${f.replace(/\.json$/, '.jsonl')}`), 'utf8').split('\n').filter(Boolean));
+  for (const { built, logs } of replayRuns('-n1.json')) {
     const t = m1(built, logs);
     const all = Object.values(t);
     console.log(`\nD = ${built[0].dS} s, ${built.length} arrivals\n\n| Class | Calls | M1 |\n| --- | --- | --- |`);

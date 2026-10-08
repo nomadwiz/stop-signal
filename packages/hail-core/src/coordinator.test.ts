@@ -907,16 +907,7 @@ describe('hailCoordinator: withdrawal and re-sending (#38)', () => {
 
     expect(committed(s).map((r) => [r.hailId, r.vehicleId, r.payload.signalId])).toEqual([['h1', 'V1', 's1'], ['h1', 'V2', 's2']]);
     expect(s.port).toEqual(['signal s1', 'retract s1 moved', 'signal s2']);
-  });
-
-  it("retracts before the first vehicle's deadline, the instant of the hail's second commit (#39, FR12)", () => {
-    const s = service();
-    s.at(T - 60_000, register, start);
-    for (const t of [T - 20_000, T, T + 20_000]) s.tick(t, v1(t));
-    s.tick(T + 40_000, v1(T + 40_000), report('V2', 'A2', 600, T + 40_000));
-    s.at(T + 42_445);
-    s.tick(T + 60_000, v1(T + 60_000, 380), report('V2', 'A2', 300, T + 60_000));
-
+    // The retraction goes out at the second commit, before the first vehicle's deadline (#39, FR12).
     const [first, second] = committed(s);
     expect(second.at).toBeLessThan(first.payload.deadline as number);
   });
