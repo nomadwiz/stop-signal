@@ -3,21 +3,13 @@
 // vehicle must not (Milestone 1's cold review, F14). The perturbation is made in memory: CI re-hashes every fixture
 // (ADR-030 decision 4).
 import { readFile } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import type { VehicleReport } from '../../hail-core/src/resolve.ts';
-import { snapshots, vehicleReports } from '../../hail-service/src/gtfs-realtime.ts';
-import { loadServiceDay } from '../../hail-service/src/gtfs-static.ts';
 import type { Scenario } from '../../hail-service/src/scenarios.ts';
-import { inputs, replay } from './replay.ts';
-
-const here = (path: string) => fileURLToPath(new URL(`../${path}`, import.meta.url));
+import { fixtures, here, inputs, replay } from './replay.ts';
 
 describe('the mutation check over the fixtures', async () => {
-  const manifest = JSON.parse(await readFile(here('fixtures/manifest.json'), 'utf8'));
-  const index = await loadServiceDay(here('fixtures/gtfs.zip'), manifest.day);
-  const snaps: { at: number; reports: VehicleReport[] }[] = [];
-  for await (const { at, feed } of snapshots(here('fixtures/snapshots'), manifest.from, manifest.to)) snaps.push({ at, reports: vehicleReports(feed, index) });
+  const { index, snaps } = await fixtures();
   // The first arrival at D = 17.4 s, queued on both time sources (ADR-035): two routes, one passenger each.
   const scenario: Scenario = JSON.parse(await readFile(here('scenarios/d17.4/1790960884710-n1.json'), 'utf8'));
   const run = (s: typeof snaps) => replay(index, inputs(s, scenario.events)).join('\n');
