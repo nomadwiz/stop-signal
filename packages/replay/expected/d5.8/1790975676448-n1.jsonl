@@ -1,0 +1,3 @@
+{"seq":1,"at":1790975647000,"kind":"registered","hailId":"h1","vehicleId":null,"payload":{"stopId":"7177-4660a5ff","routeId":"INN-202","leadTimeS":0}}
+{"seq":2,"at":1790975647000,"kind":"present","hailId":"h1","vehicleId":null,"payload":{}}
+{"seq":3,"at":1790975676448,"kind":"left","hailId":"h1","vehicleId":null,"payload":{}}

@@ -11,7 +11,7 @@
     "test": "vitest run",
     "lint": "eslint .",
     "typecheck": "tsc",
-    "replay:check": "echo 'replay:check replays nothing until #16 gives it fixtures.'"
+    "replay:check": "node packages/replay/src/replay.ts"
   },
   "devDependencies": {
     "@types/node": "^22.20.4",

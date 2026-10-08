@@ -1,0 +1,5 @@
+{"seq":1,"at":1790982408000,"kind":"registered","hailId":"h1","vehicleId":null,"payload":{"stopId":"7177-4660a5ff","routeId":"30-202","leadTimeS":0}}
+{"seq":2,"at":1790982408000,"kind":"present","hailId":"h1","vehicleId":null,"payload":{}}
+{"seq":3,"at":1790982438000,"kind":"eligible","hailId":"h1","vehicleId":null,"payload":{}}
+{"seq":4,"at":1790982628993.3982,"kind":"committed","hailId":"h1","vehicleId":"26505","payload":{"deadline":1790982658993.3982,"signalId":"s1"}}
+{"seq":5,"at":1790982708000,"kind":"spent","hailId":"h1","vehicleId":null,"payload":{}}
