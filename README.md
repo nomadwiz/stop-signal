@@ -17,6 +17,7 @@ Node.js 22.18 or later in the 22 LTS line, which runs TypeScript by stripping ty
     npm test            # Vitest, every workspace
     npm run lint        # ESLint, including the clock and import bans in hail-core
     npm run typecheck   # tsc, no output
+    npm run replay:check  # T7: replays every scenario over the fixtures; add `-- --write` to accept changed logs
 
 ## Where files belong
 
