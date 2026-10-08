@@ -314,15 +314,17 @@ describe('hailCoordinator: aggregation (#35)', () => {
     expect(s.signals.at(-1)).toMatchObject({ id: 's1', deadline: expect.closeTo(T + 16_333, -1), waiting: 3 });
   });
 
-  it('takes a stopped-vehicle commit, due at once with no deadline, as the earliest', () => {
+  it('takes a stopped-vehicle commit, due at once with no deadline, as the earliest, and keeps it when a moving one joins', () => {
     const s = service();
-    s.at(T - 60_000, ...arrived(1, 2));
+    s.at(T - 60_000, ...arrived(1, 2, 3));
     moves(s, T - 10_000, 400);
     moves(s, T, 300, ...hails(1));
     moves(s, T + 10_000, 300, ...hails(2));
+    // V1 moves off at 10 m/s, 200 m out: a deadline of T + 32.4 s.
+    moves(s, T + 20_000, 200, ...hails(3));
 
-    expect(committed(s).map((r) => r.payload.deadline === null)).toEqual([false, true]);
-    expect(s.signals.at(-1)).toMatchObject({ id: 's1', deadline: null, waiting: 2 });
+    expect(committed(s).map((r) => r.payload.deadline === null)).toEqual([false, true, false]);
+    expect(s.signals.at(-1)).toMatchObject({ id: 's1', deadline: null, waiting: 3 });
   });
 
   it('gives a hail at another stop on the same vehicle run its own signal', () => {
