@@ -118,6 +118,7 @@ jobs:
           sudo apparmor_parser -r /etc/apparmor.d/bwrap
 
       - name: Review
+        id: review
         uses: anthropics/claude-code-action@v1
         with:
           # Claude acts with this job's read-only token. Without this input the
@@ -226,6 +227,20 @@ jobs:
             Open the body with one sentence saying whether anything blocks. Then group the findings under `### Correctness`, `### Drift against the documents`, `### Project rules` and `### Suggestions`, leaving out any group that is empty. Quote the rule or the document you measured against, so the author can check your reading. A finding with no file and line is not a finding.
 
             Report only what you can point at. Where something cannot be determined from this code and those documents, say so and stop. Never pick the most plausible reading and carry on.
+
+      # The run log gives only a count of the tool calls the reviewer was
+      # refused; #130's review was refused 12, wrote no verdict, and nothing said
+      # which. This prints each one's tool and its command or path, cut to 200
+      # characters, so the allowlist can be widened from evidence. Inputs only,
+      # never results, so no document text reaches the public log.
+      - name: List the tool calls the reviewer was refused
+        if: always() && steps.review.outputs.execution_file != ''
+        env:
+          EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
+        run: |
+          jq -r '.[] | select(.type == "result") | .permission_denials[]?
+            | "\(.tool_name): \((.tool_input.command // .tool_input.file_path // .tool_input.pattern // "") | .[0:200])"' \
+            "$EXECUTION_FILE" || true
 
       # The verdict leaves this job as a file and nothing else. A run that wrote
       # inline comments and no verdict once reported success, and the pull
