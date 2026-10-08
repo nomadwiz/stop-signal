@@ -33,10 +33,10 @@ describe('m4a', () => {
     expect(m4a(log)).toEqual([2]);
   });
 
-  it('ignores the signals a hail re-commits on after a changed resolution, retract-and-recommit pairs being M4b, but keeps their approaches (ADR-011; #38)', () => {
+  it('ignores the signals a hail re-commits on after a changed resolution, retract-and-recommit pairs being M4b, but keeps their approaches, one re-sent signal each (ADR-011, decided 09-10-2026; #38)', () => {
     const log = [registered('h1', 'S'), committed('h1', 'V1', 's1'), committed('h1', 'V2', 's2'), committed('h1', 'V1', 's3')];
 
-    expect(m4a(log)).toEqual([1, 0]);
+    expect(m4a(log)).toEqual([1, 1]);
   });
 
   it('counts no approach for hails never committed', () => {

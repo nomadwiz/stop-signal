@@ -18,8 +18,8 @@ import type { Scenario } from './scenarios.ts';
 // Signals per approach in one decision log, in the order each approach first commits.
 // A hail commits again only after a changed resolution retracts its signal (#38), so only each hail's first commit
 // adds a signal: the retract-and-recommit pairs are M4b's (ADR-011). A re-commit still makes its (vehicle, stop) an
-// approach (ADR-011 decision 1), with no signal of its own unless a first commit gives it one.
-// [OPEN: whether such an approach's M4a is 0 or 1 is the project owner's; it shows here as 0.]
+// approach (ADR-011 decision 1), and an approach only a re-commit reaches counts its re-sent signal as its one
+// (ADR-011, decided 09-10-2026).
 // ponytail: a scenario replays one window at one stop, so a vehicle's run there is its vehicle.
 export function m4a(log: readonly string[]): number[] {
   const stopOf = new Map<string, string>();
@@ -31,7 +31,7 @@ export function m4a(log: readonly string[]): number[] {
     const approach = JSON.stringify([vehicleId, stopOf.get(hailId!)]);
     const ids = signals.get(approach) ?? new Set();
     signals.set(approach, ids);
-    if (!first.has(hailId!)) ids.add(payload.signalId as string);
+    if (!first.has(hailId!) || !ids.size) ids.add(payload.signalId as string);
     first.add(hailId!);
   }
   return [...signals.values()].map((s) => s.size);

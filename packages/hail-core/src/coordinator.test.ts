@@ -836,7 +836,7 @@ describe('hailCoordinator: a lost connection and a spent registration (ADR-010, 
 describe('hailCoordinator: a stale feed (#41)', () => {
   const other = (handle: string, e: HailEvent) => ({ ...e, handle }) as HailEvent;
 
-  it('abandons every live hail in one wakeup once no tick has come for more than one feed interval, and leaves the signal', () => {
+  it('abandons every live hail in one wakeup once no tick has come for more than one feed interval, and retracts the signal', () => {
     const s = service();
     // h1 commits on V1 at T + 42.4 s; h2 is Registered for route Q, its passenger away; h3's passenger arrives at T + 50 s.
     s.at(T - 60_000, register, start, other('B', { ...register, routeId: 'Q' }));
@@ -853,8 +853,8 @@ describe('hailCoordinator: a stale feed (#41)', () => {
       [70_001, 'abandoned', 'h2', null, { reason: 'feed' }],
       [70_001, 'abandoned', 'h3', null, { reason: 'feed' }],
     ]);
-    // The committed hail's signal stays: ADR-038's reason codes name no stale feed.
-    expect(s.port).toEqual(['signal s1']);
+    // The committed hail's signal is retracted with feed (ADR-038, decided 09-10-2026).
+    expect(s.port).toEqual(['signal s1', 'retract s1 feed']);
   });
 
   it('stops prediction while the feed is stale: a hail registered then is abandoned at once, and the next tick ends it', () => {
@@ -943,11 +943,21 @@ describe('hailCoordinator: withdrawal and re-sending (#38)', () => {
     expect(s.retractions()).toEqual([]);
 
     s.at(T + 6_000, { ...end, handle: passenger(2) });
-    expect(s.port).toEqual(['signal s1', 'signal s1', 'retract s1 left']);
+    expect(s.port).toEqual(['signal s1', 'signal s1', 'signal s1', 'retract s1 left']);
   });
 
-  it.todo('lowers a shared signal\'s waiting count, and moves its deadline later, when one of its hails leaves (issuecomment-6068389494: the project owner\'s)');
-  it.todo('retracts a committed hail\'s signal when a stale feed abandons it (ADR-038, annotated 09-10-2026; its reason codes name no stale feed)');
+  it('re-sends a shared signal under its id when one hail leaves, one fewer waiting, at the earliest deadline left (ADR-042, decided 09-10-2026)', () => {
+    const s = service();
+    s.at(T - 60_000, ...arrived(1, 2));
+    moves(s, T - 10_000, 400);
+    // h1 commits on a deadline of T + 22.4 s, h2 on T + 31.1 s (as in aggregation's first test).
+    moves(s, T, 300, ...hails(1));
+    moves(s, T + 5_000, 260, ...hails(2));
+    s.at(T + 6_000, { ...cancel, handle: passenger(1) });
+
+    expect(s.signals.at(-1)).toMatchObject({ id: 's1', waiting: 1, deadline: committed(s)[1].payload.deadline });
+    expect(s.retractions()).toEqual([]);
+  });
 });
 
 // T2, the lifecycle unit suite (doc/output/m1-revised.md §7.2; #33): every state a hail can be in, against every event
@@ -1262,11 +1272,11 @@ const table: Record<keyof typeof events, Record<State, Row>> = {
     left: [['abandoned feed'], FEED],
     present: [['eligible', 'abandoned feed'], `the dwell ends at T + 30 s, 1 ms before; ${FEED}`],
     'present, unattended': [['eligible', 'abandoned feed'], `the dwell ends at T + 30 s, 1 ms before; ${FEED}`],
-    eligible: [['committed', 'abandoned feed'], `its commit, at T + 42.4 s, comes first; ${FEED}, the signal staying: ADR-038's reason codes name no stale feed`],
-    'eligible, unattended': [['committed', 'abandoned feed'], `its commit, at T + 42.4 s, comes first; ${FEED}, the signal staying: ADR-038's reason codes name no stale feed`],
+    eligible: [['committed', 'abandoned feed', 'retract s1 feed'], `its commit, at T + 42.4 s, comes first; ${FEED}, retracting its signal`],
+    'eligible, unattended': [['committed', 'abandoned feed', 'retract s1 feed'], `its commit, at T + 42.4 s, comes first; ${FEED}, retracting its signal`],
     'eligible, stale': [['abandoned stale'], 'its deadline, T + 72.4 s, comes before the feed goes stale at T + 75 s: ADR-023, decided 07-10-2026'],
-    committed: [['abandoned feed'], `${FEED}, the signal staying: ADR-038's reason codes name no stale feed`],
-    'committed, unattended': [['abandoned feed'], `${FEED}, the signal staying: ADR-038's reason codes name no stale feed`],
+    committed: [['abandoned feed', 'retract s1 feed'], `${FEED}, retracting its signal`],
+    'committed, unattended': [['abandoned feed', 'retract s1 feed'], `${FEED}, retracting its signal`],
     withdrawn: [[], ENDED],
     spent: [[], ENDED],
     abandoned: [[], ENDED],

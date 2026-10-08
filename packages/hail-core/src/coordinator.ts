@@ -36,8 +36,9 @@ interface Hail {
   // The run the hail last resolved to: its last pick, stale or fresh, except a stale pick already inside its stopping
   // distance, which the hail waits on without resolving to it (ADR-039, annotated 08-10-2026).
   resolvedTo?: string;
-  // The live signal a committed hail is on, by its key in live.
+  // The live signal a committed hail is on, by its key in live, and the hail's own deadline there.
   place?: string;
+  deadline?: number | null;
   wake?: { at: number; purpose: Purpose };
 }
 type Purpose = Extract<HailEvent, { kind: 'wakeup'; hailId: string }>['purpose'];
@@ -90,8 +91,7 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
     hails.delete(h.id);
   };
   // A stale feed ends the hail in cannot hail, naming the vehicle it last resolved to, if any (ADR-017, annotated
-  // 09-10-2026). ADR-038's annotation of 09-10-2026 has #38 retract a committed hail's signal here, but the reason codes
-  // its [DECIDED:09-10-2026] fixes, left, cancelled and moved, name no stale feed, so the signal stays until one is chosen.
+  // 09-10-2026). The watchdog then retracts each committed hail's signal with feed (ADR-038, decided 09-10-2026).
   const abandonOnFeed = (h: Hail) => end(h, 'abandoned', { reason: 'feed' }, h.resolvedTo ? JSON.parse(h.resolvedTo)[0] : null);
   const wake = (h: Hail, purpose: Purpose, at: number) => {
     if (h.wake?.at === at && h.wake.purpose === purpose) return;
@@ -206,7 +206,6 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
   // C4, service-wide: a hail committed on a vehicle run at a stop joins that run's live signal there, or starts one (S4,
   // FR8). The signal takes the earliest of their deadlines, not the first or the last, and null, due at once, is
   // earliest of all (product.md §4 step 6). Committed is Delivered.
-  // ponytail: a signal stays here until retracted, so one whose hails a stale feed abandons is never dropped.
   const live = new Map<string, Signal>();
   // The signal keeps when it was first sent, and takes the predicted distance at its latest commit or join (ADR-038,
   // decided 09-10-2026). A calling report always names its trip (callingAt).
@@ -220,19 +219,28 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
       : { id: `s${++signalCount}`, vehicleId: report.vehicleId, tripId: report.tripId!, routeId: h.routeId, stopId: h.stopId, at: now, distanceM, deadline, waiting: 1 };
     live.set(place, signal);
     h.place = place;
+    h.deadline = deadline;
     note(h, 'committed', { deadline, signalId: signal.id }, report.vehicleId);
     signals.signal(signal);
   };
-  // Takes the hail off its signal, and retracts the signal once no live hail is left on it (FR12). Whether a signal
-  // that keeps other hails lowers waiting and moves its deadline later is open (#38, issuecomment-6068389494).
+  // Takes the hail off its signal (FR12). The signal is retracted once no live hail is left on it; otherwise it is
+  // handed over again under its id, counting the hails left at the earliest of their deadlines (ADR-042, decided
+  // 09-10-2026). A signal a stale feed already retracted is gone, so its other hails release nothing.
   // ponytail: scans every live hail per withdrawal; count hails per signal if that shows.
   const release = (h: Hail, reason: WithdrawalReason) => {
     const place = h.place;
-    if (!place) return;
     h.place = undefined;
-    if ([...hails.values()].some((o) => o.place === place)) return;
-    signals.retract(live.get(place)!.id, reason);
-    live.delete(place);
+    const was = place && live.get(place);
+    if (!was) return;
+    const left = [...hails.values()].filter((o) => o.place === place).map((o) => o.deadline ?? null);
+    if (!left.length) {
+      signals.retract(was.id, reason);
+      live.delete(place);
+      return;
+    }
+    const signal = { ...was, waiting: left.length, deadline: left.some((d) => d === null) ? null : Math.min(...(left as number[])) };
+    live.set(place, signal);
+    signals.signal(signal);
   };
   // A changed resolution: a fresh report puts a bus of the hail's route, not skipped, nearer than the run the hail
   // committed on, and that bus is due now, by the commit rule. The hail's signal is retracted, then the hail commits on
@@ -316,8 +324,12 @@ export function hailCoordinator({ clock, record, signals, schedule, timetable, d
       case 'wakeup': {
         // C5's watchdog: once the feed is stale, every live hail ends at once (FR14, QR7). Only the one the latest tick
         // set acts, so it fires in clock order with the hails' own wakeups; one a later tick replaced does nothing.
+        // Every hail ends before any signal is released, so each signal is retracted once rather than re-sent first.
         if (event.purpose === 'feed') {
-          if (event.at === lastTickAt + FEED_INTERVAL_MS + 1) for (const h of hails.values()) abandonOnFeed(h);
+          if (event.at !== lastTickAt + FEED_INTERVAL_MS + 1) return;
+          const all = [...hails.values()];
+          for (const h of all) abandonOnFeed(h);
+          for (const h of all) release(h, 'feed');
           return;
         }
         // Only the wakeup the hail now waits for acts; one a later event replaced does nothing.
