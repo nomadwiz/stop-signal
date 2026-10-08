@@ -18,7 +18,7 @@ afterEach(() => {
 async function serve(submit?: (event: HailEvent) => void) {
   const applied: HailEvent[] = [];
   const wakeups = scheduler<HailEvent>({ now: () => 0 }, eventLoop((event) => applied.push(event)));
-  const channel = driverChannel();
+  const channel = driverChannel({ routes: new Map(), stops: new Map() });
   const passengers = passengerChannel(submit ?? wakeups.submit);
   server = hailServer({ channel, passengers, submit: submit ?? wakeups.submit });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -107,10 +107,10 @@ describe('hailServer, the driver console routes', () => {
     const response = await fetch(`${base}/signals`);
     const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
 
-    channel.signal({ id: 's1', vehicleId: 'v7', stopId: '7177-4660a5ff', deadline: 1_790_000_022_444, waiting: 2 });
+    channel.signal({ id: 's1', vehicleId: 'v7', tripId: 't', routeId: 'r', stopId: '7177-4660a5ff', at: 1_790_000_000_000, distanceM: 450, deadline: 1_790_000_022_444, waiting: 2 });
 
     expect(response.headers.get('content-type')).toBe('text/event-stream');
-    expect((await reader.read()).value).toBe('event: signal\ndata: {"id":"s1","vehicleId":"v7","stopId":"7177-4660a5ff","deadline":1790000022444,"waiting":2}\n\n');
+    expect((await reader.read()).value).toBe('event: signal\ndata: {"id":"s1","vehicleId":"v7","tripId":"t","routeId":"r","stopId":"7177-4660a5ff","at":1790000000000,"distanceM":450,"deadline":1790000022444,"waiting":2,"route":"r","stopCode":"","stopName":"7177-4660a5ff"}\n\n');
   });
 
   it.each([
