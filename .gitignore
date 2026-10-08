@@ -1,2 +1,6 @@
 node_modules/
 packages/console/dist/
+.env*
+*.pem
+*.key
+.aws/
