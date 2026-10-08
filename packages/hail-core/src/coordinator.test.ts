@@ -3,7 +3,7 @@ import { hailCoordinator, type ServiceDay } from './coordinator.ts';
 import type { HailEvent } from './events.ts';
 import { eventLoop, scheduler } from './loop.ts';
 import type { VehicleReport } from './resolve.ts';
-import type { Signal } from './signal.ts';
+import type { Signal, WithdrawalReason } from './signal.ts';
 import { recorder, type DecisionRecord } from './trace.ts';
 
 const T = 1_790_000_000_000;
@@ -47,16 +47,16 @@ function service(timetable: ServiceDay = road) {
   const clock = { now: () => now };
   const records: DecisionRecord[] = [];
   const signals: Signal[] = [];
+  // What SignalPort was handed, in order: 'signal <id>' or 'retract <id> <reason>'.
+  const port: string[] = [];
   const scheduled: { at: number; event: HailEvent }[] = [];
   const wakeups = scheduler<HailEvent>(clock, eventLoop<HailEvent>((e) => apply(e)));
   const apply = hailCoordinator({
     clock,
     record: recorder(clock, { append: (r) => records.push(r) }),
     signals: {
-      signal: (s) => signals.push(s),
-      retract: () => {
-        throw new Error('no retraction before #38');
-      },
+      signal: (s) => (signals.push(s), port.push(`signal ${s.id}`)),
+      retract: (id: string, reason: WithdrawalReason) => port.push(`retract ${id} ${reason}`),
     },
     schedule: (at, event) => {
       scheduled.push({ at, event });
@@ -76,6 +76,8 @@ function service(timetable: ServiceDay = road) {
   return {
     records,
     signals,
+    port,
+    retractions: () => port.filter((p) => p.startsWith('retract')),
     scheduled,
     kinds: () => records.map((r) => r.kind),
     at,
@@ -156,6 +158,7 @@ describe('hailCoordinator: presence and dwell', () => {
     s.at(T + 70_000);
 
     expect(timeline(s.records)).toEqual([['registered', 0], ['present', 0], ['eligible', 30], ['left', 35], ['returned', 40], ['eligible', 70]]);
+    expect(s.port).toEqual([]);
   });
 
   it('keeps the first presence-start\'s arrival when another arrives while present, for a hail registered after both', () => {
@@ -798,6 +801,7 @@ describe('hailCoordinator: a lost connection and a spent registration (ADR-010, 
     expect(s.records.map((r) => [r.kind, r.hailId])).toEqual([
       ['registered', 'h1'], ['present', 'h1'], ['eligible', 'h1'], ['committed', 'h1'], ['spent', 'h1'], ['registered', 'h2'],
     ]);
+    expect(s.port).toEqual(['signal s1', 'retract s1 left']);
   });
 
   it('spends a delivered hail on an explicit presence-end even when Unattended: decision 4 covers silence only (ADR-010, annotated 08-10-2026)', () => {
@@ -813,13 +817,14 @@ describe('hailCoordinator: a lost connection and a spent registration (ADR-010, 
     ]);
   });
 
-  it('withdraws a delivered hail on cancel', () => {
+  it('withdraws a delivered hail on cancel, retracting its signal (FR2, FR12)', () => {
     const s = service();
     s.at(T - 40_000, register, start);
     for (const t of [T - 20_000, T]) s.tick(t, v1(t, 380));
     s.at(T + 10_000, cancel);
 
     expect(s.kinds()).toEqual(['registered', 'present', 'eligible', 'committed', 'withdrawn']);
+    expect(s.port).toEqual(['signal s1', 'retract s1 cancelled']);
   });
 });
 
@@ -845,8 +850,8 @@ describe('hailCoordinator: a stale feed (#41)', () => {
       [70_001, 'abandoned', 'h2', null, { reason: 'feed' }],
       [70_001, 'abandoned', 'h3', null, { reason: 'feed' }],
     ]);
-    // The harness throws on a retraction: the committed hail's signal stays until #38 retracts it.
-    expect(s.signals).toHaveLength(1);
+    // The committed hail's signal stays: the reason a feed-stale retraction carries is the project owner's to decide.
+    expect(s.port).toEqual(['signal s1']);
   });
 
   it('stops prediction while the feed is stale: a hail registered then is abandoned at once, and the next tick ends it', () => {
@@ -883,6 +888,38 @@ describe('hailCoordinator: a stale feed (#41)', () => {
 
     expect(s.kinds()).toEqual(['registered', 'registered']);
   });
+});
+
+// S5: retraction (#38, FR12). A signal is retracted when its last live hail leaves it; a changed resolution retracts
+// it from the first vehicle and signals the second (ADR-003; ADR-037 decision 1).
+describe('hailCoordinator: withdrawal and re-sending (#38)', () => {
+  it('retracts from the first vehicle, then signals the second, when a fresh report puts a due bus of the route nearer', () => {
+    const s = service();
+    s.at(T - 60_000, register, start);
+    for (const t of [T - 20_000, T, T + 20_000]) s.tick(t, v1(t));
+    s.tick(T + 40_000, v1(T + 40_000), report('V2', 'A2', 600, T + 40_000));
+    s.at(T + 42_445);
+    // V1 slows to 1 m/s at 380 m; V2 comes on at 15 m/s, 300 m out, past its commit instant (deadline T + 69.7 s).
+    s.tick(T + 60_000, v1(T + 60_000, 380), report('V2', 'A2', 300, T + 60_000));
+
+    expect(committed(s).map((r) => [r.hailId, r.vehicleId, r.payload.signalId])).toEqual([['h1', 'V1', 's1'], ['h1', 'V2', 's2']]);
+    expect(s.port).toEqual(['signal s1', 'retract s1 moved', 'signal s2']);
+  });
+
+  it('keeps a shared signal while any of its hails is live, and retracts it when the last one leaves', () => {
+    const s = service();
+    s.at(T - 60_000, ...arrived(1, 2));
+    moves(s, T - 10_000, 400);
+    moves(s, T, 300, ...hails(1, 2));
+    s.at(T + 5_000, { ...cancel, handle: passenger(1) });
+    expect(s.retractions()).toEqual([]);
+
+    s.at(T + 6_000, { ...end, handle: passenger(2) });
+    expect(s.port).toEqual(['signal s1', 'signal s1', 'retract s1 left']);
+  });
+
+  it.todo('lowers a shared signal\'s waiting count, and moves its deadline later, when one of its hails leaves (issuecomment-6068389494: the project owner\'s)');
+  it.todo('retracts a committed hail\'s signal when a stale feed abandons it (ADR-038, annotated 09-10-2026; the reason code is the project owner\'s)');
 });
 
 // T2, the lifecycle unit suite (doc/output/m1-revised.md §7.2; #33): every state a hail can be in, against every event
@@ -1000,7 +1037,8 @@ type Row = [written: string[], rule: string, next?: [act: (s: Service, e: number
 
 const WITHDRAWS = 'FR2; ADR-017, decided 07-10-2026';
 const NO_HAIL = 'no hail';
-const NO_RERESOLVE = 'a committed hail does not re-resolve until #38: ADR-037, annotated 08-10-2026';
+const NO_RERESOLVE = 'no nearer bus of its route, so the resolution stands: ADR-003; ADR-037 decision 1';
+const RETRACTS = 'FR2, FR12: the hail was its signal\'s last';
 const ALREADY_UNATTENDED = 'already Unattended: ADR-017, one record per transition';
 const DUPLICATE = 'one live hail per handle, stop and route: ADR-032 decision 4; ADR-010, annotated 08-10-2026';
 const ENDED = 'the hail has ended, so nothing names it';
@@ -1039,8 +1077,8 @@ const table: Record<keyof typeof events, Record<State, Row>> = {
     eligible: [['withdrawn'], WITHDRAWS, [(s) => s.at(T + 42_445), []]],
     'eligible, unattended': [['withdrawn'], WITHDRAWS],
     'eligible, stale': [['withdrawn'], WITHDRAWS],
-    committed: [['withdrawn'], 'FR2; the signal stays until #38 retracts it'],
-    'committed, unattended': [['withdrawn'], 'FR2; the signal stays until #38 retracts it'],
+    committed: [['withdrawn', 'retract s1 cancelled'], RETRACTS],
+    'committed, unattended': [['withdrawn', 'retract s1 cancelled'], RETRACTS],
     withdrawn: [[], ENDED],
     spent: [[], ENDED],
     abandoned: [[], ENDED],
@@ -1071,8 +1109,8 @@ const table: Record<keyof typeof events, Record<State, Row>> = {
     eligible: [['left'], 'back to Registered, uncommitted: ADR-040 decision 3', [(s) => s.at(T + 42_445), []]],
     'eligible, unattended': [['left'], 'back to Registered, the departure reported: ADR-040 decisions 3 and 5'],
     'eligible, stale': [['left'], 'back to Registered, uncommitted: ADR-040 decision 3', [(s) => s.at(T + 72_445), []]],
-    committed: [['spent'], 'FR13; ADR-010 decision 1'],
-    'committed, unattended': [['spent'], 'ADR-010, annotated 08-10-2026'],
+    committed: [['spent', 'retract s1 left'], 'FR12, FR13; ADR-010 decisions 1 and 2'],
+    'committed, unattended': [['spent', 'retract s1 left'], 'FR12; ADR-010, annotated 08-10-2026'],
     withdrawn: [[], `${ENDED}; presence ends`, [(s, e) => s.at(e + 1_000, register), ['registered']]],
     spent: [[], ENDED],
     abandoned: [[], `${ENDED}; presence ends`],
@@ -1196,11 +1234,11 @@ const table: Record<keyof typeof events, Record<State, Row>> = {
     left: [['abandoned feed'], FEED],
     present: [['eligible', 'abandoned feed'], `the dwell ends at T + 30 s, 1 ms before; ${FEED}`],
     'present, unattended': [['eligible', 'abandoned feed'], `the dwell ends at T + 30 s, 1 ms before; ${FEED}`],
-    eligible: [['committed', 'abandoned feed'], `its commit, at T + 42.4 s, comes first; ${FEED}, the signal staying until #38`],
-    'eligible, unattended': [['committed', 'abandoned feed'], `its commit, at T + 42.4 s, comes first; ${FEED}, the signal staying until #38`],
+    eligible: [['committed', 'abandoned feed'], `its commit, at T + 42.4 s, comes first; ${FEED}, the signal staying: its reason code is the project owner's`],
+    'eligible, unattended': [['committed', 'abandoned feed'], `its commit, at T + 42.4 s, comes first; ${FEED}, the signal staying: its reason code is the project owner's`],
     'eligible, stale': [['abandoned stale'], 'its deadline, T + 72.4 s, comes before the feed goes stale at T + 75 s: ADR-023, decided 07-10-2026'],
-    committed: [['abandoned feed'], `${FEED}, the signal staying until #38`],
-    'committed, unattended': [['abandoned feed'], `${FEED}, the signal staying until #38`],
+    committed: [['abandoned feed'], `${FEED}, the signal staying: its reason code is the project owner's`],
+    'committed, unattended': [['abandoned feed'], `${FEED}, the signal staying: its reason code is the project owner's`],
     withdrawn: [[], ENDED],
     spent: [[], ENDED],
     abandoned: [[], ENDED],
@@ -1225,13 +1263,13 @@ describe('T2: every lifecycle state against every event (#33)', () => {
         it(`${state} writes [${written.join(', ')}]: ${rule}`, () => {
           const s = service();
           const e = states[state as State].reach(s);
-          // Every commit hands SignalPort its signal, new or joined (#32, #35); the harness throws on a retraction, which is #38's.
+          // Every commit hands SignalPort its signal, new or joined (#32, #35); a retraction (#38) is listed after the records.
           const step = (act: (s: Service, e: number) => void) => {
-            const [records, signals] = [s.records.length, s.signals.length];
+            const [records, signals, retractions] = [s.records.length, s.signals.length, s.retractions().length];
             act(s, e);
             const added = s.records.slice(records);
             expect(s.signals.length - signals).toBe(added.filter((r) => r.kind === 'committed').length);
-            return added.map(outcome);
+            return [...added.map(outcome), ...s.retractions().slice(retractions)];
           };
           expect(step(events[event as keyof typeof events])).toEqual(written);
           if (next) expect(step(next[0])).toEqual(next[1]);
