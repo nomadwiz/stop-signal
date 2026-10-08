@@ -20,10 +20,10 @@ const DECEL_MPS2 = 0.9;
 const DWELL_MS = 30_000;
 
 const clock = { now: () => Date.now() };
-const signals = driverChannel();
 // ponytail: no live feed reaches the loop yet, so no hail resolves or commits; load the service day when the feed is wired.
 // Typed as the StaticIndex loadServiceDay returns, so tsc checks it satisfies the coordinator's ServiceDay.
 const day: StaticIndex = { day: '', previousDay: '', stops: new Map(), routes: new Map(), trips: new Map(), lateTrips: new Map(), tripsAtStop: new Map(), shapes: new Map() };
+const signals = driverChannel(day);
 // ponytail: stdout, which a restart starts again at seq 1; ADR-017's open item on a file and a restarted seq is #50's.
 const record = recorder(clock, { append: (r) => console.log(JSON.stringify(r)) });
 
