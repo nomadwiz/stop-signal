@@ -12,6 +12,7 @@
 import { readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { DecisionRecord } from '../../hail-core/src/trace.ts';
+import type { Group } from './m1.ts';
 import type { Scenario } from './scenarios.ts';
 
 // Signals per approach in one decision log, in the order each approach first commits.
@@ -29,25 +30,34 @@ export function m4a(log: readonly string[]): number[] {
   return [...signals.values()].map((s) => s.size);
 }
 
+export interface M4aRow { scenarios: number; uncommitted: number; approaches: number[] }
+
+// Each scenario's signals per approach, by its file's group (ADR-034 decision 2). A scenario with no commit has no
+// approach, so no M4a; it counts as uncommitted.
+export function m4aByGroup(built: readonly Scenario[], logs: readonly (readonly string[])[]): Record<Group, M4aRow> {
+  const rows: Record<Group, M4aRow> = {
+    'single-on-both': { scenarios: 0, uncommitted: 0, approaches: [] },
+    'queued-on-both': { scenarios: 0, uncommitted: 0, approaches: [] },
+    disputed: { scenarios: 0, uncommitted: 0, approaches: [] },
+  };
+  for (const [i, s] of built.entries()) {
+    const counts = m4a(logs[i]);
+    rows[s.group].scenarios++;
+    if (!counts.length) rows[s.group].uncommitted++;
+    rows[s.group].approaches.push(...counts);
+  }
+  return rows;
+}
+
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const replay = (path: string) => fileURLToPath(new URL(`../../replay/${path}`, import.meta.url));
   for (const d of readdirSync(replay('scenarios')).sort((a, b) => Number(b.slice(1)) - Number(a.slice(1)))) {
     const files = readdirSync(replay(`scenarios/${d}`)).filter((f) => f.endsWith('-n5.json')).sort();
-    const rows = new Map<Scenario['group'], { scenarios: number; uncommitted: number; approaches: number[] }>(
-      (['single-on-both', 'queued-on-both', 'disputed'] as const).map((g) => [g, { scenarios: 0, uncommitted: 0, approaches: [] }]),
-    );
-    const off: string[] = [];
-    for (const f of files) {
-      const s: Scenario = JSON.parse(readFileSync(replay(`scenarios/${d}/${f}`), 'utf8'));
-      const counts = m4a(readFileSync(replay(`expected/${d}/${f.replace(/\.json$/, '.jsonl')}`), 'utf8').split('\n').filter(Boolean));
-      const row = rows.get(s.group)!;
-      row.scenarios++;
-      if (!counts.length) row.uncommitted++;
-      row.approaches.push(...counts);
-      if (counts.some((n) => n !== 1)) off.push(`${d}/${f}: ${counts.join(', ')}`);
-    }
+    const built: Scenario[] = files.map((f) => JSON.parse(readFileSync(replay(`scenarios/${d}/${f}`), 'utf8')));
+    const logs = files.map((f) => readFileSync(replay(`expected/${d}/${f.replace(/\.json$/, '.jsonl')}`), 'utf8').split('\n').filter(Boolean));
+    const off = files.flatMap((f, i) => (m4a(logs[i]).some((n) => n !== 1) ? [`${d}/${f}: ${m4a(logs[i]).join(', ')}`] : []));
     console.log(`\nD = ${d.slice(1)} s, ${files.length} scenarios at N = 5\n\n| Group | Scenarios | With no commit | Approaches | M4a |\n| --- | --- | --- | --- | --- |`);
-    for (const [group, { scenarios, uncommitted, approaches: a }] of rows) {
+    for (const [group, { scenarios, uncommitted, approaches: a }] of Object.entries(m4aByGroup(built, logs))) {
       const one = a.filter((n) => n === 1).length;
       console.log(`| ${group} | ${scenarios} | ${uncommitted} | ${a.length} | ${one === a.length ? `1 on all ${a.length}` : `1 on ${one} of ${a.length}, at most ${Math.max(...a)}`} |`);
     }
