@@ -55,7 +55,7 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
     const files = readdirSync(replay(`scenarios/${d}`)).filter((f) => f.endsWith('-n5.json')).sort();
     const built: Scenario[] = files.map((f) => JSON.parse(readFileSync(replay(`scenarios/${d}/${f}`), 'utf8')));
     const logs = files.map((f) => readFileSync(replay(`expected/${d}/${f.replace(/\.json$/, '.jsonl')}`), 'utf8').split('\n').filter(Boolean));
-    const off = files.flatMap((f, i) => (m4a(logs[i]).some((n) => n !== 1) ? [`${d}/${f}: ${m4a(logs[i]).join(', ')}`] : []));
+    const off = logs.map(m4a).flatMap((c, i) => (c.some((n) => n !== 1) ? [`${d}/${files[i]}: ${c.join(', ')}`] : []));
     console.log(`\nD = ${d.slice(1)} s, ${files.length} scenarios at N = 5\n\n| Group | Scenarios | With no commit | Approaches | M4a |\n| --- | --- | --- | --- | --- |`);
     for (const [group, { scenarios, uncommitted, approaches: a }] of Object.entries(m4aByGroup(built, logs))) {
       const one = a.filter((n) => n === 1).length;
