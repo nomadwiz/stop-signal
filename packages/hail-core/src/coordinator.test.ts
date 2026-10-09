@@ -973,6 +973,9 @@ describe('hailCoordinator: withdrawal and re-sending (#38)', () => {
 
     expect(committed(s).map((r) => [r.hailId, r.vehicleId, r.payload.signalId])).toEqual([['h1', 'V1', 's1'], ['h1', 'V2', 's2']]);
     expect(s.port).toEqual(['signal s1', 'retract s1 moved', 'signal s2']);
+    // The retraction goes out at the second commit, before the first vehicle's deadline (#39, FR12).
+    const [first, second] = committed(s);
+    expect(second.at).toBeLessThan(first.payload.deadline as number);
   });
 
   // V2 reports as [tick, metres before S, fix], seconds from T. V1 commits h1 at T + 42.4 s and slows to 1 m/s 380 m out
