@@ -244,7 +244,7 @@ export function hailCoordinator({ clock, record, signals, notify, schedule, time
     h.deadline = deadline;
     note(h, 'committed', { deadline, signalId: signal.id }, report.vehicleId);
     signals.signal(signal);
-    if (deadline !== null && !h.told) wake(h, 'deadline', deadline);
+    if (deadline !== null) wake(h, 'deadline', deadline);
   };
   // Takes the hail off its signal (FR12). The signal is retracted once no live hail is left on it; otherwise it is
   // handed over again under its id, counting the hails left at the earliest of their deadlines (ADR-042, decided

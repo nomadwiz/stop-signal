@@ -954,6 +954,15 @@ describe('hailCoordinator: the outcome (#61, FR11)', () => {
     expect(s.outcomes[0].nextDistanceM).toBeCloseTo(700, 0);
   });
 
+  it('gives no next bus as null when the feed shows none (ADR-032)', () => {
+    const s = service();
+    s.at(T - 40_000, register, start);
+    for (const t of [T - 20_000, T, T + 20_000]) s.tick(t, v1(t));
+    s.tick(T + 40_000, v1(T + 40_000, 100));
+
+    expect(s.outcomes).toEqual([{ ...told('cannot-hail'), reason: 'deadline', nextDistanceM: null }]);
+  });
+
   it('tells cannot hail with reason stale when the bus\'s prediction is still stale at the deadline (#61-4)', () => {
     const s = service();
     states['eligible, stale'].reach(s);
@@ -973,6 +982,18 @@ describe('hailCoordinator: the outcome (#61, FR11)', () => {
     s.tick(T + 40_000, v1(T + 40_000, -50));
 
     expect(s.outcomes).toEqual([told('unacknowledged')]);
+  });
+
+  it('tells a stopped-vehicle hail acknowledged first nothing more when its run stops calling (#61-1)', () => {
+    const s = service();
+    s.at(T - 40_000, register, start);
+    for (const t of [T - 20_000, T]) s.tick(t, v1(t, 380));
+    s.at(T + 10_000, { kind: 'console-ack', signalId: 's1' });
+
+    s.tick(T + 20_000, v1(T + 20_000, -50));
+    s.tick(T + 40_000, v1(T + 40_000, -250));
+
+    expect(s.outcomes).toEqual([told('confirmed')]);
   });
 
   it('tells a hail spent before an acknowledgement or its deadline nothing (#61-2)', () => {
