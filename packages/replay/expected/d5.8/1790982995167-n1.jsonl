@@ -2,4 +2,5 @@
 {"seq":2,"at":1790982695167,"kind":"present","hailId":"h1","vehicleId":null,"payload":{}}
 {"seq":3,"at":1790982725167,"kind":"eligible","hailId":"h1","vehicleId":null,"payload":{}}
 {"seq":4,"at":1790982915309.4734,"kind":"committed","hailId":"h1","vehicleId":"14323","payload":{"deadline":1790982945309.4734,"signalId":"s1"}}
-{"seq":5,"at":1790982995167,"kind":"spent","hailId":"h1","vehicleId":null,"payload":{}}
+{"seq":5,"at":1790982945309.4734,"kind":"unacknowledged","hailId":"h1","vehicleId":"14323","payload":{}}
+{"seq":6,"at":1790982995167,"kind":"spent","hailId":"h1","vehicleId":null,"payload":{}}
