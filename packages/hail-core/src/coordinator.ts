@@ -33,7 +33,7 @@ interface Hail {
   state: 'registered' | 'present' | 'eligible' | 'committed';
   left: boolean;
   unattended: boolean;
-  // Told confirmed or unacknowledged, at most one of them (#61).
+  // Told confirmed or unacknowledged, at most one of them per signal: a move clears it (#61, #61-3).
   told: boolean;
   // The vehicle runs this hail passed over for being too close to stop, never resolved to again (ADR-039 decision 2).
   skipped: Set<string>;
@@ -102,7 +102,8 @@ export function hailCoordinator({ clock, record, signals, notify, schedule, time
     tell(h, { outcome: 'cannot-hail', reason, ...next });
   };
   // A committed hail is told confirmed on an acknowledgement of its signal, or unacknowledged at its own deadline with
-  // none, whichever comes first, and stays committed until it ends (#61).
+  // none, whichever comes first, and stays committed until it ends (#61). With no deadline, committed on a stopped
+  // vehicle, it is unacknowledged at the first tick its run no longer calls at the stop, passed or gone (#61-1).
   const answer = (h: Hail, outcome: 'confirmed' | 'unacknowledged') => {
     h.told = true;
     h.wake = undefined;
@@ -275,6 +276,7 @@ export function hailCoordinator({ clock, record, signals, notify, schedule, time
     const d = signalDeadline(now, p.distanceM, p.speedMps, decelMps2);
     if (p.speedMps === 0 ? p.distanceM > reach(p.report, h.stopId) : !d || now < d.deadline - FEED_INTERVAL_MS) return;
     release(h, 'moved');
+    h.told = false;
     h.resolvedTo = run(p.report);
     commit(h, p, d?.deadline ?? null, now);
   };
@@ -390,7 +392,10 @@ export function hailCoordinator({ clock, record, signals, notify, schedule, time
         for (const vehicleId of runs.keys()) if (!seen.has(vehicleId)) runs.delete(vehicleId);
         for (const h of hails.values()) {
           if (h.state === 'eligible') consider(h, now);
-          else if (h.state === 'committed') reconsider(h, now);
+          else if (h.state === 'committed') {
+            if (!h.told && h.deadline === null && !calling(h, now).some((c) => run(c.report) === h.resolvedTo)) answer(h, 'unacknowledged');
+            reconsider(h, now);
+          }
         }
         return;
       }

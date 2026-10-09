@@ -898,8 +898,6 @@ describe('hailCoordinator: a stale feed (#41)', () => {
   });
 });
 
-// S5: retraction (#38, FR12). A signal is retracted when its last live hail leaves it; a changed resolution retracts
-// it from the first vehicle and signals the second (ADR-003; ADR-037 decision 1).
 describe('hailCoordinator: the outcome (#61, FR11)', () => {
   // h1 commits on V1 at T + 42.4 s, its deadline T + 72.4 s; V1 reports every 20 s until T + 60 s.
   const committed = () => {
@@ -956,11 +954,54 @@ describe('hailCoordinator: the outcome (#61, FR11)', () => {
     expect(s.outcomes[0].nextDistanceM).toBeCloseTo(700, 0);
   });
 
-  it.todo('a hail committed on a stopped vehicle has no deadline: when is it unacknowledged? (owner\'s decision)');
-  it.todo('a hail spent by a presence-end before an acknowledgement or its deadline: is it told an outcome? (owner\'s decision)');
-  it.todo('a hail already told confirmed or unacknowledged that a changed resolution moves to another bus: is it told again? (owner\'s decision)');
+  it('tells cannot hail with reason stale when the bus\'s prediction is still stale at the deadline (#61-4)', () => {
+    const s = service();
+    states['eligible, stale'].reach(s);
+
+    s.at(T + 72_445);
+
+    expect(s.outcomes).toEqual([{ ...told('cannot-hail'), reason: 'stale' }]);
+  });
+
+  it('tells a hail committed on a stopped vehicle unacknowledged once its run stops calling at the stop (#61-1)', () => {
+    const s = service();
+    s.at(T - 40_000, register, start);
+    for (const t of [T - 20_000, T, T + 20_000]) s.tick(t, v1(t, 380));
+    expect(s.outcomes).toEqual([]);
+
+    // V1 is 50 m past S.
+    s.tick(T + 40_000, v1(T + 40_000, -50));
+
+    expect(s.outcomes).toEqual([told('unacknowledged')]);
+  });
+
+  it('tells a hail spent before an acknowledgement or its deadline nothing (#61-2)', () => {
+    const s = committed();
+
+    s.at(T + 50_000, end);
+    s.at(T + 80_000, { kind: 'console-ack', signalId: 's1' });
+
+    expect(s.outcomes).toEqual([]);
+  });
+
+  it('tells a hail moved to another bus its new signal\'s outcome, though told the first (#61-3)', () => {
+    const s = service();
+    s.at(T - 60_000, register, start);
+    for (const t of [T - 20_000, T, T + 20_000]) s.tick(t, v1(t));
+    s.tick(T + 40_000, v1(T + 40_000), report('V2', 'A2', 600, T + 40_000));
+    s.at(T + 42_445);
+    s.at(T + 50_000, { kind: 'console-ack', signalId: 's1' });
+    // V1 slows at 380 m; V2, 300 m out, is due: h1 moves to s2.
+    s.tick(T + 60_000, v1(T + 60_000, 380), report('V2', 'A2', 300, T + 60_000));
+
+    s.at(T + 61_000, { kind: 'console-ack', signalId: 's2' });
+
+    expect(s.outcomes).toEqual([told('confirmed'), told('confirmed')]);
+  });
 });
 
+// S5: retraction (#38, FR12). A signal is retracted when its last live hail leaves it; a changed resolution retracts
+// it from the first vehicle and signals the second (ADR-003; ADR-037 decision 1).
 describe('hailCoordinator: withdrawal and re-sending (#38)', () => {
   it('retracts from the first vehicle, then signals the second, when a fresh report puts a due bus of the route nearer', () => {
     const s = service();
