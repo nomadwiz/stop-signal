@@ -12,6 +12,7 @@ import { hailCoordinator, type ServiceDay } from '../../hail-core/src/coordinato
 import type { HailEvent } from '../../hail-core/src/events.ts';
 import { eventLoop, scheduler } from '../../hail-core/src/loop.ts';
 import type { VehicleReport } from '../../hail-core/src/resolve.ts';
+import type { SignalPort } from '../../hail-core/src/signal.ts';
 import { recorder } from '../../hail-core/src/trace.ts';
 import { snapshots, vehicleReports } from '../../hail-service/src/gtfs-realtime.ts';
 import { loadServiceDay } from '../../hail-service/src/gtfs-static.ts';
@@ -34,9 +35,10 @@ export function inputs(snaps: readonly { at: number; reports: VehicleReport[] }[
 // One fresh coordinator applies every input through submit(), as the live adapters do (ADR-028 decision 1). Before each
 // input, every wakeup due by then fires with the clock at its own t, as the live timer fires it to within 100 ms, so a
 // replay never runs a commit late by the gap to the next snapshot. The replay ends at its last input, so a wakeup due
-// after it never fires. Signals and outcomes go nowhere: the log is what T7 compares.
-// Each line is JSON.stringify of the record, as main.ts writes it, keys in ADR-017's order.
-export function replay(timetable: ServiceDay, timed: readonly Timed[]): string[] {
+// after it never fires. Outcomes go nowhere, and signals too unless a caller passes a SignalPort: the log is what T7 compares.
+// Each line is JSON.stringify of the record, as main.ts writes it, keys in ADR-017's order. The sweep (#67) replays at
+// other decelerations and reads the signals.
+export function replay(timetable: ServiceDay, timed: readonly Timed[], decelMps2 = DECEL_MPS2, signals: SignalPort = { signal: () => {}, retract: () => {} }): string[] {
   let now = -Infinity;
   const clock = { now: () => now };
   const log: string[] = [];
@@ -44,11 +46,11 @@ export function replay(timetable: ServiceDay, timed: readonly Timed[]): string[]
   const apply = hailCoordinator({
     clock,
     record: recorder(clock, { append: (r) => log.push(JSON.stringify(r)) }),
-    signals: { signal: () => {}, retract: () => {} },
+    signals,
     notify: { outcome: () => {} },
     schedule: wakeups.at,
     timetable,
-    decelMps2: DECEL_MPS2,
+    decelMps2,
     dwellMs: DWELL_MS,
   });
   for (const { at, event } of timed) {
