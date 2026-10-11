@@ -19,7 +19,7 @@ import type { Scenario } from './scenarios.ts';
 // M2: each signal's margin before its own deadline, the last safe stopping point (ADR-023), from every `committed`
 // record, which hands the hail's signal to SignalPort in the same transition (ADR-017). The target is that the worst
 // tenth still arrives early: the nearest-rank tenth percentile of the margins is above 0. A commit on a stopped vehicle
-// has no deadline (ADR-037), so no margin, and is counted apart, as T6 counts it (ADR-038, annotated 09-10-2026).
+// has no deadline (ADR-037), so no margin, and is left out, as T6 leaves it out (ADR-038, annotated 09-10-2026).
 export function m2(logs: readonly (readonly string[])[]) {
   const margins: number[] = [];
   let noDeadline = 0;
@@ -33,8 +33,9 @@ export function m2(logs: readonly (readonly string[])[]) {
 }
 
 // M3: hails told an outcome, confirmed, unacknowledged or cannot hail (#61), before their target bus called at the stop
-// on the oracle's time. A hail committed on a stopped vehicle and spent before its run stops calling is told no outcome
-// (ADR-032 and ADR-038, annotated 09-10-2026); it is counted apart, so it is not read as a notification failure (#66).
+// on the oracle's time, over every hail (product.md §3, m1-revised.md §7.3). A hail committed on a stopped vehicle and
+// spent before its run stops calling is told no outcome (ADR-032 and ADR-038, annotated 09-10-2026); it counts as not
+// told, and `stopped` names it apart.
 // ponytail: scored on each hail's first commit, as M1 is; no fixture scenario moves a hail.
 export function m3(built: readonly Scenario[], logs: readonly (readonly string[])[]) {
   const n = { hails: 0, before: 0, after: 0, stopped: 0, committedUntold: 0, uncommitted: 0 };
@@ -81,7 +82,6 @@ export function report(n1: Run, n5: Run): string[] {
   const share = ({ calls, right }: Tally) => `${right} / ${calls} = ${pct(right, calls)}`;
   const m2r = m2(n1.logs);
   const m3r = m3(n1.built, n1.logs);
-  const told = m3r.hails - m3r.stopped;
   const perApproach = n5.logs.flatMap(m4a);
   const corrections = n5.logs.map(m4b);
   const approaches = corrections.reduce((n, c) => n + c.approaches, 0);
@@ -102,14 +102,15 @@ export function report(n1: Run, n5: Run): string[] {
     `| M1, single on both | ${pct(t['single-on-both'].right, t['single-on-both'].calls)} | ≥ 95% | ${met(t['single-on-both'].calls, t['single-on-both'].right >= 0.95 * t['single-on-both'].calls)} |`,
     `| M1, queued on both | ${pct(t['queued-on-both'].right, t['queued-on-both'].calls)} | ≥ 80% | ${met(t['queued-on-both'].calls, t['queued-on-both'].right >= 0.8 * t['queued-on-both'].calls)} |`,
     `| M2, worst tenth's margin before the deadline | ${s(m2r.worstTenthMs)}; ${m2r.early} of ${m2r.signals} signals early | Worst tenth still early: > 0 s | ${met(m2r.signals, m2r.worstTenthMs > 0)} |`,
-    `| M3, told the outcome before the bus called | ${m3r.before} / ${told} = ${pct(m3r.before, told)} | ≥ 99% | ${met(told, m3r.before >= 0.99 * told)} |`,
+    `| M3, told the outcome before the bus called | ${m3r.before} / ${m3r.hails} = ${pct(m3r.before, m3r.hails)} | ≥ 99% | ${met(m3r.hails, m3r.before >= 0.99 * m3r.hails)} |`,
     '| M3, median from decision to presentation | Not measured by replay | ≤ 1 s | — |',
     `| M4a, signals per approach | 1 on ${perApproach.filter((k) => k === 1).length} of ${perApproach.length} approaches | Exactly 1 | ${met(perApproach.length, perApproach.every((k) => k === 1))} |`,
     `| M4b, approaches with a correction | ${corrected} / ${approaches} = ${pct(corrected, approaches)} | ≤ 10% | ${met(approaches, corrected <= 0.1 * approaches)} |`,
     `| M4c, approaches reaching their deadline in Unattended | ${unattended} / ${approaches} = ${pct(unattended, approaches)} | ≤ 5% | ${met(approaches, unattended <= 0.05 * approaches)} |`,
     '',
-    `Apart from M3: ${m3r.stopped} hails committed on a stopped vehicle were spent before their run stopped calling, so were told no outcome (ADR-032 and ADR-038, annotated 09-10-2026). M2 leaves out the ${m2r.noDeadline} commits on a stopped vehicle, which have no deadline (ADR-037).`,
-    `M3's ${told - m3r.before} not told before the bus called: ${m3r.committedUntold} committed with a deadline and spent before it, told nothing; ${m3r.uncommitted} never committed or abandoned; ${m3r.after} told after the call.`,
+    `Within M3: ${m3r.stopped} hails committed on a stopped vehicle were spent before their run stopped calling, so were told no outcome (ADR-032 and ADR-038, annotated 09-10-2026).`,
+    `M2 leaves out the ${m2r.noDeadline} commits on a stopped vehicle because they have no deadline, so no margin before one (ADR-037).`,
+    `M3's ${m3r.hails - m3r.before} not told before the bus called: ${m3r.stopped} committed on a stopped vehicle, told nothing; ${m3r.committedUntold} committed with a deadline and spent before it, told nothing; ${m3r.uncommitted} never committed or abandoned; ${m3r.after} told after the call.`,
     `M3's latency: each outcome is recorded in the transition that decides it, so the replay has no delay to measure; the time to presentation is the passenger app's. No replayed scenario sends a console acknowledgement, so every committed hail's outcome is unacknowledged or none.`,
     `M4c: ${n5.logs.flatMap(records).filter((r) => r.kind === 'unattended').length} \`unattended\` records in the N = 5 logs.`,
   ];
