@@ -3,7 +3,7 @@
 // t_pr = 2.0 s and a ∈ [0.9, 1.47] m/s² are m1-revised.md §1.4's cited values. a is required here; ADR-023 decision 2
 // sets DECEL_MPS2 = 0.9 where the service configures the loop, the value behind QR1's 17.4 s bound (R2 §2).
 
-const T_PR = 2.0;
+export const T_PR = 2.0;
 
 // D = t_pr + v/a: seconds from the signal reaching the driver to the vehicle standing at the stop.
 export function stoppingBudget(speed: number, decel: number): number {
