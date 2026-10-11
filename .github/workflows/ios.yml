@@ -1,0 +1,22 @@
+# Runs the passenger app's XCTests on an iPhone simulator, headless, as m1-revised.md §3.4 requires.
+# Only a push that changes ios/ starts it: a macOS job is slow and has nothing to test elsewhere.
+# macos-latest's default Xcode ships the iPhone 17 simulator the destination names.
+#
+# The review's squash merges start no push run (see ci.yml), so master gets no run of its own;
+# the branch's last push is what tested the merged ios/.
+
+name: iOS
+
+on:
+  push:
+    paths: ['ios/**']
+
+permissions:
+  contents: read
+
+jobs:
+  xctest:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: xcodebuild test -project ios/StopSignal.xcodeproj -scheme StopSignal -destination 'platform=iOS Simulator,name=iPhone 17'
