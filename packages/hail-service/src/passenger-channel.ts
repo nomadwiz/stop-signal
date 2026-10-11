@@ -1,5 +1,6 @@
-// The NotificationPort adapter: each armed device holds an outcome stream open, and receives its own outcomes
-// on it as server-sent events (ADR-032). The stream's loss is ADR-010's connection loss, so it reaches the loop.
+// The NotificationPort adapter: each armed device holds an outcome stream open, and receives its own outcomes, and
+// its hails' Armed states as a second event (#158), on it as server-sent events (ADR-032). The stream's loss is
+// ADR-010's connection loss, so it reaches the loop.
 import type { ServerResponse } from 'node:http';
 import type { HailEvent } from '../../hail-core/src/events.ts';
 import type { NotificationPort } from '../../hail-core/src/notification.ts';
@@ -10,6 +11,9 @@ export function passengerChannel(submit: (event: HailEvent) => void): Notificati
   return {
     outcome(handle, outcome) {
       for (const res of streams.get(handle) ?? []) res.write(`event: outcome\ndata: ${JSON.stringify(outcome)}\n\n`);
+    },
+    status(handle, status) {
+      for (const res of streams.get(handle) ?? []) res.write(`event: status\ndata: ${JSON.stringify(status)}\n\n`);
     },
     stream(handle, res) {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' }).flushHeaders();

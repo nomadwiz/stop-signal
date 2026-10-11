@@ -184,6 +184,18 @@ describe('hailServer, HailApi', () => {
     expect(applied).toEqual([{ kind: 'connection-lost', handle }]);
   });
 
+  // #158: the Armed state is a second event on the same stream (ADR-032, annotated 11-10-2026).
+  it('sends each Armed state for its handle on POST /outcomes as event: status', async () => {
+    const { base, passengers } = await serve();
+    const response = await post(`${base}/outcomes`, JSON.stringify({ handle }), new AbortController().signal);
+    const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
+
+    passengers.status('a0000000-0000-4000-8000-000000000000', { stop, route, status: 'sent' });
+    passengers.status(handle, { stop, route, status: 'stale' });
+
+    expect((await reader.read()).value).toBe('event: status\ndata: {"stop":"7177-4660a5ff","route":"30","status":"stale"}\n\n');
+  });
+
   // ADR-032, annotated 05-10-2026: only the last of a handle's open streams submits connection-lost on closing,
   // because a device that reconnects can hold a new stream before its old one's close reaches the server.
   it('submits nothing when one of a handle\'s two streams closes, and connection-lost when the last one does', async () => {
