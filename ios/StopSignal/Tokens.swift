@@ -15,6 +15,7 @@ enum Tokens {
         let color: List<Colour>
         let type: Types
         let spacing: List<Value>
+        let radius: List<Value>
         let size: List<Value>
     }
 
@@ -40,6 +41,7 @@ enum Tokens {
 
     static func space(_ name: String) -> CGFloat { points(file.spacing.tokens, name) }
     static func size(_ name: String) -> CGFloat { points(file.size.tokens, name) }
+    static func radius(_ name: String) -> CGFloat { points(file.radius.tokens, name) }
 
     // An iOS style's size is its size at the default Large setting; `tokenFont` scales it with Dynamic Type relative to
     // the Apple text style it stands for, so no point size is fixed (design-system README §Type).
