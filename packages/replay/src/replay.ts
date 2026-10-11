@@ -37,8 +37,8 @@ export function inputs(snaps: readonly { at: number; reports: VehicleReport[] }[
 // replay never runs a commit late by the gap to the next snapshot. The replay ends at its last input, so a wakeup due
 // after it never fires. Outcomes go nowhere, and signals too unless a caller passes a SignalPort: the log is what T7 compares.
 // Each line is JSON.stringify of the record, as main.ts writes it, keys in ADR-017's order. The sweep (#67) replays at
-// other decelerations and reads the signals.
-export function replay(timetable: ServiceDay, timed: readonly Timed[], decelMps2 = DECEL_MPS2, signals: SignalPort = { signal: () => {}, retract: () => {} }): string[] {
+// other decelerations and reads the signals; the resource run (#69) passes a generator, to time each input as it is pulled.
+export function replay(timetable: ServiceDay, timed: Iterable<Timed>, decelMps2 = DECEL_MPS2, signals: SignalPort = { signal: () => {}, retract: () => {} }): string[] {
   let now = -Infinity;
   const clock = { now: () => now };
   const log: string[] = [];
