@@ -17,7 +17,7 @@ import { replayRuns } from '../../hail-service/src/replay-runs.ts';
 import { fixtures, inputs, replay, type Timed } from './replay.ts';
 
 // Both ends of the band, and every tenth between.
-export const DECELS = [0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.47];
+const DECELS = [0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.47];
 
 // For each a: M2 over the replayed logs, and the least and greatest D among its signals. A signal's speed is recovered
 // from its first send, where distanceM and the deadline are both its commit's: ADR-023 decision 1 puts the deadline
@@ -48,7 +48,7 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
   for (const { d, built } of replayRuns('-n1.json')) {
     console.log(`\nScenarios ${d}: ${built.length} at N = 1\n\n| a | D its signals span | M2, worst tenth | Signals early | Met | Stopped, left out |\n| --- | --- | --- | --- | --- | --- |`);
     for (const { a, m2: r, dS, spanned } of sweep(index, snaps, built.map((s) => s.events))) {
-      console.log(`| ${a.toFixed(2)} m/s² | ${dS[0].toFixed(1)}–${dS[1].toFixed(1)} s | ${(r.worstTenthMs / 1000).toFixed(3)} s | ${r.early} of ${r.signals} | ${r.worstTenthMs > 0 ? 'yes' : 'no'} | ${r.noDeadline} |`);
+      console.log(`| ${a.toFixed(2)} m/s² | ${spanned ? `${dS[0].toFixed(1)}–${dS[1].toFixed(1)} s` : '—'} | ${(r.worstTenthMs / 1000).toFixed(3)} s | ${r.early} of ${r.signals} | ${r.worstTenthMs > 0 ? 'yes' : 'no'} | ${r.noDeadline} |`);
       if (spanned !== r.signals) console.warn(`  D spans ${spanned} of ${r.signals} signals at ${a}: the rest joined a live signal.`);
     }
     console.log('\nM2 leaves out each commit on a stopped vehicle, which has no deadline (ADR-037).');
