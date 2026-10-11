@@ -8,12 +8,12 @@
 //   which `npm run replay:check` holds to the replay, and prints for each D the table `| Class | Calls | M1 |`.
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import type { DecisionRecord } from '../../hail-core/src/trace.ts';
-import { replayRuns } from './replay-runs.ts';
+import { records, replayRuns } from './replay-runs.ts';
 import type { Scenario } from './scenarios.ts';
 
 // One hail as its decision log tells it: its route and the call its passengers want (ADR-035 decision 3), when it was
-// registered and became eligible, its first commit, its abandonment, and every skip it wrote.
+// registered and became eligible, its first commit, its abandonment, when it was first told an outcome (#61), and every
+// skip it wrote.
 export interface Hail {
   routeId: string;
   target: Scenario['calls'][number];
@@ -21,13 +21,14 @@ export interface Hail {
   eligible?: number;
   committed?: { at: number; vehicleId: string; deadline: number | null };
   abandoned?: string;
+  told?: number;
   skipped: { at: number; candidates: string[] }[];
 }
 
 // Every hail in a scenario's decision log, in the order registered.
 export function hails(scenario: Scenario, log: readonly string[]): Hail[] {
   const byId = new Map<string, Hail>();
-  for (const { at, kind, hailId, vehicleId, payload } of log.map((l): DecisionRecord => JSON.parse(l))) {
+  for (const { at, kind, hailId, vehicleId, payload } of records(log)) {
     if (kind === 'registered') {
       const routeId = payload.routeId as string;
       byId.set(hailId!, { routeId, target: scenario.calls.find((c) => c.routeId === routeId)!, registered: at, skipped: [] });
@@ -37,6 +38,7 @@ export function hails(scenario: Scenario, log: readonly string[]): Hail[] {
     if (kind === 'eligible') h.eligible ??= at;
     if (kind === 'committed') h.committed ??= { at, vehicleId: vehicleId!, deadline: payload.deadline as number | null };
     if (kind === 'abandoned') h.abandoned = payload.reason as string;
+    if (['unacknowledged', 'confirmed', 'abandoned'].includes(kind)) h.told ??= at;
     if (kind === 'skipped') h.skipped.push({ at, candidates: payload.candidates as string[] });
   }
   return [...byId.values()];
