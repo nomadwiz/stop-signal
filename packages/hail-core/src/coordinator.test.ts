@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { hailCoordinator, type ServiceDay } from './coordinator.ts';
 import type { HailEvent } from './events.ts';
-import type { Outcome } from './notification.ts';
+import type { Outcome, Status } from './notification.ts';
 import { eventLoop, scheduler } from './loop.ts';
 import type { VehicleReport } from './resolve.ts';
 import type { Signal, WithdrawalReason } from './signal.ts';
@@ -53,6 +53,8 @@ function service(timetable: ServiceDay = road) {
   const scheduled: { at: number; event: HailEvent }[] = [];
   // What NotificationPort was handed, in order (#61).
   const outcomes: (Outcome & { handle: string })[] = [];
+  // And each Armed state it was handed (#158).
+  const statuses: (Status & { handle: string })[] = [];
   const wakeups = scheduler<HailEvent>(clock, eventLoop<HailEvent>((e) => apply(e)));
   const apply = hailCoordinator({
     clock,
@@ -64,7 +66,10 @@ function service(timetable: ServiceDay = road) {
       },
       retract: (id: string, reason: WithdrawalReason) => port.push(`retract ${id} ${reason}`),
     },
-    notify: { outcome: (handle, o) => outcomes.push({ handle, ...o }) },
+    notify: {
+      outcome: (handle, o) => outcomes.push({ handle, ...o }),
+      status: (handle, st) => statuses.push({ handle, ...st }),
+    },
     schedule: (at, event) => {
       scheduled.push({ at, event });
       wakeups.at(at, event);
@@ -85,6 +90,7 @@ function service(timetable: ServiceDay = road) {
     signals,
     port,
     outcomes,
+    statuses,
     retractions: () => port.filter((p) => p.startsWith('retract')),
     scheduled,
     kinds: () => records.map((r) => r.kind),
@@ -1018,6 +1024,54 @@ describe('hailCoordinator: the outcome (#61, FR11)', () => {
     s.at(T + 61_000, { kind: 'console-ack', signalId: 's2' });
 
     expect(s.outcomes).toEqual([told('confirmed'), told('confirmed')]);
+  });
+});
+
+// The Armed state (#158; ADR-032, annotated 11-10-2026): a second server-sent event beside the outcome, sent only when
+// its value changes. A hail starts waiting, so registering sends none.
+describe('hailCoordinator: the Armed state (#158)', () => {
+  const shown = (status: Status['status']) => ({ handle: HANDLE, stop: 'S', route: 'R', status });
+
+  it('sends sent on a first commit, and moved on the commit after a moved release', () => {
+    const s = service();
+    s.at(T - 60_000, register, start);
+    for (const t of [T - 20_000, T, T + 20_000]) s.tick(t, v1(t));
+    s.tick(T + 40_000, v1(T + 40_000), report('V2', 'A2', 600, T + 40_000));
+    s.at(T + 42_445);
+    expect(s.statuses).toEqual([shown('sent')]);
+
+    // V1 slows at 380 m; V2, 300 m out, is due: h1 moves to s2.
+    s.tick(T + 60_000, v1(T + 60_000, 380), report('V2', 'A2', 300, T + 60_000));
+
+    expect(s.statuses).toEqual([shown('sent'), shown('moved')]);
+  });
+
+  it('sends stale when the resolved pick goes stale before commit, and waiting when it turns fresh again', () => {
+    const s = service();
+    s.at(T - 40_000, register, start);
+    for (const t of [T - 20_000, T]) s.tick(t, v1(t));
+    // The feed stays live, re-serving V1's fix from T, 40 s old by T + 40 s.
+    for (const t of [T + 20_000, T + 40_000]) s.tick(t, v1(T));
+    expect(s.statuses).toEqual([shown('stale')]);
+
+    s.tick(T + 41_000, v1(T + 41_000));
+
+    expect(s.statuses).toEqual([shown('stale'), shown('waiting')]);
+  });
+
+  it('sends no status when the value has not changed, and tells the outcome as before', () => {
+    const s = service();
+    s.at(T - 40_000, register, start);
+    for (const t of [T - 20_000, T]) s.tick(t, v1(t));
+    for (const t of [T + 20_000, T + 40_000, T + 41_000]) s.tick(t, v1(T));
+    s.tick(T + 42_000, v1(T + 42_000));
+    s.at(T + 42_445);
+    s.tick(T + 60_000, v1(T + 60_000));
+
+    s.at(T + 72_445);
+
+    expect(s.statuses).toEqual([shown('stale'), shown('waiting'), shown('sent')]);
+    expect(s.outcomes).toEqual([{ handle: HANDLE, stop: 'S', route: 'R', outcome: 'unacknowledged' }]);
   });
 });
 
