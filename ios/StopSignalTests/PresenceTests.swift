@@ -75,8 +75,8 @@ final class PresenceTests: XCTestCase {
         XCTAssertEqual(present(200, was: nil), false)
         XCTAssertEqual(present(75, was: nil), nil)
 
-        try await model.register(stop: melrose, route: "70-205", duration: 0)
         fixes.send(130, from: melrose)
+        try await model.register(stop: melrose, route: "70-205", duration: 0)
         fixes.send(40, from: melrose)
         fixes.send(130, from: melrose)
         try await until { [self] in presence.count == 3 }
@@ -85,16 +85,24 @@ final class PresenceTests: XCTestCase {
         XCTAssertEqual(sent.map(\.body), Array(repeating: ["handle": "h", "stop": melrose.id], count: 3))
     }
 
+    // The owner's decision of 12-10-2026 (ADR-045 decision 5): arming reports the session's first fix accurate to 50 m,
+    // stationary or not, before Register, so a new hail never commits on an arrival held from an earlier session.
+    func testAFirstFixBeyond100mSendsPresenceEndBeforeRegister() async throws {
+        fixes.send(200, from: melrose, stationary: true)
+        try await model.register(stop: melrose, route: "70-205", duration: 0)
+        XCTAssertEqual(StubProtocol.requests.map(\.url.path).filter { $0 != "/outcomes" }, ["/presence/end", "/register"])
+    }
+
     // #58 acceptance 2: no coordinate leaves the device. Every request through an armed session carries only QR8's
     // handle, stop, route and duration, in its body, and none has a query.
     func testNoCoordinateLeavesTheDevice() async throws {
-        try await model.register(stop: melrose, route: "70-205", duration: 0)
         fixes.send(10, from: melrose)
+        try await model.register(stop: melrose, route: "70-205", duration: 0)
         fixes.send(200, from: melrose)
         try await until { [self] in presence.count == 2 }
         try await model.cancel()
 
-        XCTAssertEqual(StubProtocol.requests.map(\.url.path).filter { $0 != "/outcomes" }, ["/register", "/presence/start", "/presence/end", "/cancel"])
+        XCTAssertEqual(StubProtocol.requests.map(\.url.path).filter { $0 != "/outcomes" }, ["/presence/start", "/register", "/presence/end", "/cancel"])
         for request in StubProtocol.requests {
             XCTAssertTrue(Set(request.body.allKeys as! [String]).isSubset(of: ["handle", "stop", "route", "duration"]), request.url.path)
             XCTAssertNil(request.url.query, request.url.path)
@@ -105,8 +113,8 @@ final class PresenceTests: XCTestCase {
     // and closes on cancel, on cannot-hail, or on a departure after a delivered hail, which sends presence/end.
     func testTheSessionClosesOnCancelOnCannotHailOrOnADepartureAfterADeliveredHail() async throws {
         StubProtocol.reply = Data(("event: status\ndata: {\"stop\":\"7177-4660a5ff\",\"route\":\"70-205\",\"status\":\"sent\"}\n\n" + outcome("confirmed") + outcome("unacknowledged")).utf8)
-        try await model.register(stop: melrose, route: "70-205", duration: 0)
         fixes.send(10, from: melrose)
+        try await model.register(stop: melrose, route: "70-205", duration: 0)
         try await until { [self] in model.present == true && model.outcome?.outcome == "unacknowledged" }
         XCTAssertTrue(model.delivered)
         XCTAssertFalse(fixes.closed)
@@ -114,15 +122,16 @@ final class PresenceTests: XCTestCase {
         try await until { [self] in fixes.closed }
         XCTAssertEqual(presence, ["/presence/start", "/presence/end"])
 
+        // The next three sessions send no fix, so arming waits for none.
         StubProtocol.reply = Data(outcome("cannot-hail").utf8)
         let cannot = FakeFixes()
-        let other = HailViewModel(api: HailApi(base: URL(string: "https://hail.test")!, handle: "h", session: StubProtocol.session), fixes: cannot)
+        let other = HailViewModel(api: HailApi(base: URL(string: "https://hail.test")!, handle: "h", session: StubProtocol.session), fixes: cannot, wait: .zero)
         try await other.register(stop: melrose, route: "70-205", duration: 0)
         try await until { cannot.closed }
 
         StubProtocol.reply = Data()
         let cancelled = FakeFixes()
-        let third = HailViewModel(api: HailApi(base: URL(string: "https://hail.test")!, handle: "h", session: StubProtocol.session), fixes: cancelled)
+        let third = HailViewModel(api: HailApi(base: URL(string: "https://hail.test")!, handle: "h", session: StubProtocol.session), fixes: cancelled, wait: .zero)
         try await third.register(stop: melrose, route: "70-205", duration: 0)
         try await third.cancel()
         try await until { cancelled.closed }
@@ -131,7 +140,7 @@ final class PresenceTests: XCTestCase {
         // closes it.
         StubProtocol.failing = true
         let failed = FakeFixes()
-        let fourth = HailViewModel(api: HailApi(base: URL(string: "https://hail.test")!, handle: "h", session: StubProtocol.session), fixes: failed)
+        let fourth = HailViewModel(api: HailApi(base: URL(string: "https://hail.test")!, handle: "h", session: StubProtocol.session), fixes: failed, wait: .zero)
         do { try await fourth.register(stop: melrose, route: "70-205", duration: 0) } catch {}
         XCTAssertNil(fourth.registration)
         try await until { failed.closed }
@@ -141,8 +150,8 @@ final class PresenceTests: XCTestCase {
     // #58 acceptance 4: with nothing delivered, a departure keeps the session open, and a return to the stop sends
     // presence/start again (ADR-040 decisions 1 and 2).
     func testADepartureWithNothingDeliveredKeepsTheSessionOpenAndAReturnSendsPresenceStartAgain() async throws {
-        try await model.register(stop: melrose, route: "70-205", duration: 0)
         fixes.send(10, from: melrose)
+        try await model.register(stop: melrose, route: "70-205", duration: 0)
         fixes.send(200, from: melrose)
         fixes.send(10, from: melrose)
 

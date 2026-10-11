@@ -70,7 +70,7 @@ final class StopSignalTests: XCTestCase {
 
     // ADR-012 decision 2: the view model holds the hail's state and its register and cancel intents, with no UI.
     func testTheViewModelRegistersAndCancelsAHail() async throws {
-        let model = HailViewModel(api: HailApi(base: base, handle: handle, session: StubProtocol.session), fixes: FakeFixes())
+        let model = HailViewModel(api: HailApi(base: base, handle: handle, session: StubProtocol.session), fixes: FakeFixes(), wait: .zero)
         let stop = Stop.bundled[0]
 
         try await model.register(stop: stop, route: "70-203", duration: 0)

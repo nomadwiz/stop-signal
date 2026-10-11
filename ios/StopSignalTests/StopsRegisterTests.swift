@@ -43,7 +43,7 @@ final class StopsRegisterTests: XCTestCase {
     }
 
     func model(_ session: URLSession = .shared) -> HailViewModel {
-        HailViewModel(api: HailApi(base: URL(string: "https://hail.test")!, handle: "h", session: session), fixes: FakeFixes())
+        HailViewModel(api: HailApi(base: URL(string: "https://hail.test")!, handle: "h", session: session), fixes: FakeFixes(), wait: .zero)
     }
 
     func element(_ elements: [NSObject], _ label: String) -> NSObject {

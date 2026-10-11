@@ -18,34 +18,46 @@ final class HailViewModel {
     private(set) var delivered = false
     // The registered hail's latest outcome.
     private(set) var outcome: Outcome?
-    private var armed: Task<Void, Never>?
+    private var sensing: Task<Void, Never>?
+    private var listening: Task<Void, Never>?
     private let api: HailApi
     private let fixes: Fixes
+    private let wait: Duration
 
-    init(api: HailApi, fixes: Fixes) {
+    // ponytail: an assumption, not a measured time. How long arming waits for a first fix accurate to 50 m before
+    // Register goes ahead without one (the owner's decision of 12-10-2026). Measure a cold fix on a device to set it.
+    static let firstFixWait = Duration.seconds(5)
+
+    init(api: HailApi, fixes: Fixes, wait: Duration = firstFixWait) {
         self.api = api
         self.fixes = fixes
+        self.wait = wait
     }
 
     // The session opens before the registration's round trip, while the passenger is still tapping Arm, because only
     // a session made in the foreground becomes active (CLBackgroundActivitySession.h; ADR-009, annotated 02-10-2026).
+    // Its first accurate fix is reported before Register, so a hail never commits on an arrival the service holds from
+    // an earlier session (ADR-045 decision 5). Arming replaces any session before it.
     func register(stop: Stop, route: String, duration: Int) async throws {
+        close()
+        (present, delivered, outcome) = (nil, false, nil)
         let opened = fixes.open()
+        let (first, reported) = AsyncStream.makeStream(of: Void.self)
+        sensing = Task { await sense(stop, opened, reported) }
+        let timer = Task { [wait] in
+            try? await Task.sleep(for: wait)
+            reported.finish()
+        }
+        for await _ in first {}
+        timer.cancel()
         do {
             try await api.register(stop: stop.id, route: route, duration: duration)
         } catch {
-            // ponytail: a stream nobody reads never ends, so it is read in a cancelled task, which ends it at once.
-            Task { for await _ in opened {} }.cancel()
+            close()
             throw error
         }
-        close()
         registration = Registration(stop: stop.id, route: route)
-        (present, delivered, outcome) = (nil, false, nil)
-        armed = Task {
-            async let stream: Void = listen()
-            await sense(stop, opened)
-            await stream
-        }
+        listening = Task { await listen() }
     }
 
     func cancel() async throws {
@@ -58,16 +70,21 @@ final class HailViewModel {
     // The session stays open through confirmed and unacknowledged, and closes on cancel, on cannot-hail, or on a
     // departure after a delivered hail (ADR-040, annotated 11-10-2026). Dropping the fixes ends it.
     private func close() {
-        armed?.cancel()
-        armed = nil
+        sensing?.cancel()
+        listening?.cancel()
+        (sensing, listening) = (nil, nil)
     }
 
     // A closed session's task is cancelled, but its stream still hands over fixes already buffered, and the view
-    // model's state belongs to the newest session, so each step checks for cancellation first.
+    // model's state belongs to the newest session, so each step checks for cancellation first. `reported` finishes
+    // once the first accurate fix is reported, which lets arming send Register.
     // ponytail: a failed transition is not retried, and the stream is not reopened; #55 shows unreachable and re-arms.
-    private func sense(_ stop: Stop, _ fixes: AsyncStream<Fix>) async {
+    private func sense(_ stop: Stop, _ fixes: AsyncStream<Fix>, _ reported: AsyncStream<Void>.Continuation) async {
+        defer { reported.finish() }
+        var first = true
         for await fix in fixes where !Task.isCancelled {
-            guard let now = fix.present(at: stop.location, was: present), now != present else { continue }
+            defer { if fix.accurate { first = false; reported.finish() } }
+            guard let now = fix.present(at: stop.location, was: present, first: first), now != present else { continue }
             present = now
             if now {
                 try? await api.presenceStart(stop: stop.id)
