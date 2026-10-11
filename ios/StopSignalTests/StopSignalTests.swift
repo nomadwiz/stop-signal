@@ -7,7 +7,7 @@ import XCTest
 // Answers every request in place of the network and keeps what it was sent: 200 with `reply` for the
 // outcome stream, 204 with no body for the other routes, as packages/hail-service/src/server.ts answers.
 final class StubProtocol: URLProtocol {
-    nonisolated(unsafe) static var requests: [(method: String, url: URL, body: NSDictionary)] = []
+    nonisolated(unsafe) static var requests: [(method: String, url: URL, body: NSDictionary, timeout: TimeInterval)] = []
     nonisolated(unsafe) static var reply = Data()
 
     static var session: URLSession {
@@ -30,7 +30,7 @@ final class StubProtocol: URLProtocol {
             bytes.append(buffer, count: count)
         }
         stream.close()
-        Self.requests.append((request.httpMethod!, request.url!, try! JSONSerialization.jsonObject(with: bytes) as! NSDictionary))
+        Self.requests.append((request.httpMethod!, request.url!, try! JSONSerialization.jsonObject(with: bytes) as! NSDictionary, request.timeoutInterval))
         let streaming = request.url!.path == "/outcomes"
         let response = HTTPURLResponse(url: request.url!, statusCode: streaming ? 200 : 204, httpVersion: nil, headerFields: nil)!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
@@ -95,6 +95,8 @@ final class StopSignalTests: XCTestCase {
             ["handle": handle, "stop": "7012"],
             ["handle": handle],
         ])
+        // The outcome stream is silent between outcomes, so URLSession's 60 s idle default would close it (ADR-010 decision 3).
+        XCTAssertEqual(StubProtocol.requests[4].timeout, TimeInterval(Int32.max))
         XCTAssertEqual(outcomes, [Outcome(stop: "7012", route: "70-203", outcome: "cannot-hail", reason: "deadline", nextDistanceM: 1200)])
     }
 
