@@ -1,0 +1,324 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXContainerItemProxy section */
+		5A0000000000000000000013 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 5A0000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 5A0000000000000000000010;
+			remoteInfo = StopSignal;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		5A0000000000000000000005 /* StopSignal.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = StopSignal.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		5A0000000000000000000006 /* StopSignalTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = StopSignalTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		5A0000000000000000000003 /* StopSignal */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = StopSignal;
+			sourceTree = "<group>";
+		};
+		5A0000000000000000000004 /* StopSignalTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = StopSignalTests;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		5A0000000000000000000016 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5A0000000000000000000019 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		5A0000000000000000000002 = {
+			isa = PBXGroup;
+			children = (
+				5A0000000000000000000003 /* StopSignal */,
+				5A0000000000000000000004 /* StopSignalTests */,
+				5A0000000000000000000007 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		5A0000000000000000000007 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				5A0000000000000000000005 /* StopSignal.app */,
+				5A0000000000000000000006 /* StopSignalTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		5A0000000000000000000010 /* StopSignal */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5A0000000000000000000022 /* Build configuration list for PBXNativeTarget "StopSignal" */;
+			buildPhases = (
+				5A0000000000000000000014 /* Sources */,
+				5A0000000000000000000016 /* Frameworks */,
+				5A0000000000000000000015 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				5A0000000000000000000003 /* StopSignal */,
+			);
+			name = StopSignal;
+			productName = StopSignal;
+			productReference = 5A0000000000000000000005 /* StopSignal.app */;
+			productType = "com.apple.product-type.application";
+		};
+		5A0000000000000000000011 /* StopSignalTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5A0000000000000000000023 /* Build configuration list for PBXNativeTarget "StopSignalTests" */;
+			buildPhases = (
+				5A0000000000000000000017 /* Sources */,
+				5A0000000000000000000019 /* Frameworks */,
+				5A0000000000000000000018 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				5A0000000000000000000012 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				5A0000000000000000000004 /* StopSignalTests */,
+			);
+			name = StopSignalTests;
+			productName = StopSignalTests;
+			productReference = 5A0000000000000000000006 /* StopSignalTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		5A0000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2700;
+				LastUpgradeCheck = 2700;
+				TargetAttributes = {
+					5A0000000000000000000011 = {
+						TestTargetID = 5A0000000000000000000010;
+					};
+				};
+			};
+			buildConfigurationList = 5A0000000000000000000021 /* Build configuration list for PBXProject "StopSignal" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 5A0000000000000000000002;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 5A0000000000000000000007 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				5A0000000000000000000010 /* StopSignal */,
+				5A0000000000000000000011 /* StopSignalTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		5A0000000000000000000015 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5A0000000000000000000018 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		5A0000000000000000000014 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5A0000000000000000000017 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		5A0000000000000000000012 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 5A0000000000000000000010 /* StopSignal */;
+			targetProxy = 5A0000000000000000000013 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		5A0000000000000000000031 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		5A0000000000000000000032 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		5A0000000000000000000033 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = StopSignal;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.nomadwiz.StopSignal;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Debug;
+		};
+		5A0000000000000000000034 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = StopSignal;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.nomadwiz.StopSignal;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Release;
+		};
+		5A0000000000000000000035 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.nomadwiz.StopSignalTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/StopSignal.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/StopSignal";
+			};
+			name = Debug;
+		};
+		5A0000000000000000000036 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.nomadwiz.StopSignalTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/StopSignal.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/StopSignal";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		5A0000000000000000000021 /* Build configuration list for PBXProject "StopSignal" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5A0000000000000000000031 /* Debug */,
+				5A0000000000000000000032 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		5A0000000000000000000022 /* Build configuration list for PBXNativeTarget "StopSignal" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5A0000000000000000000033 /* Debug */,
+				5A0000000000000000000034 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		5A0000000000000000000023 /* Build configuration list for PBXNativeTarget "StopSignalTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5A0000000000000000000035 /* Debug */,
+				5A0000000000000000000036 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 5A0000000000000000000001 /* Project object */;
+}
