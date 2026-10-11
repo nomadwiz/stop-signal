@@ -4,7 +4,8 @@
 //   Writes <root>/<UTC date>/<epoch-ms>.pb.gz every 20 s and logs one line per poll to stdout.
 //   Each file is written as <name>.tmp, then renamed: anything syncing or watching the archive
 //   reads only *.pb.gz, since a crash between the two steps leaves the .tmp behind.
-//   Run it in one place at a time: two pollers halve the 35,000-calls-a-week quota (#9).
+//   Run it in one place at a time: two pollers halve the 35,000-calls-a-week quota (#9). The hail service polls
+//   too, only for field-test windows (ADR-044).
 import { realpathSync } from 'node:fs';
 import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -15,6 +16,10 @@ export const FEED_URL = 'https://api.at.govt.nz/realtime/legacy';
 export const POLL_MS = 20_000;
 // Shorter than the poll, so a hung request never overlaps the next tick.
 export const TIMEOUT_MS = 15_000;
+
+// One request for the feed, as capture and the hail service both make it (ADR-044).
+export const requestFeed = (key: string, fetchFeed: typeof fetch) =>
+  fetchFeed(FEED_URL, { headers: { 'Ocp-Apim-Subscription-Key': key, Accept: 'application/x-protobuf' }, signal: AbortSignal.timeout(TIMEOUT_MS) });
 
 interface Capture {
   root: string;
@@ -28,10 +33,7 @@ export async function captureOnce({ root, key, now, fetchFeed, log }: Capture): 
   const at = now();
   const stamp = new Date(at).toISOString();
   try {
-    const response = await fetchFeed(FEED_URL, {
-      headers: { 'Ocp-Apim-Subscription-Key': key, Accept: 'application/x-protobuf' },
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    });
+    const response = await requestFeed(key, fetchFeed);
     if (!response.ok) {
       // An unread body holds its socket open until garbage collection.
       await response.body?.cancel();
