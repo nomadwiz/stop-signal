@@ -50,7 +50,7 @@ export function replay(timetable: ServiceDay, timed: Iterable<Timed>, decelMps2 
     clock,
     record: recorder(clock, { append: (r) => log.push(JSON.stringify(r)) }),
     signals,
-    notify: { outcome: () => {} },
+    notify: { outcome: () => {}, status: () => {} },
     schedule: wakeups.at,
     timetable,
     decelMps2,

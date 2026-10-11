@@ -3,11 +3,12 @@
 // event the loop hands it, in queue order (ADR-002), and writes exactly one decision record per transition (ADR-017).
 // C9 (#61, FR11): it tells the passenger each hail's outcome through NotificationPort.
 // S5 (#38, FR12): a signal is retracted when its last live hail leaves it, and a changed resolution re-signals.
+// S7 (#158): it tells the passenger each change in the hail's Armed state through NotificationPort.
 import type { Clock } from './clock.ts';
 import { signalDeadline } from './deadline.ts';
 import type { HailEvent } from './events.ts';
 import { FEED_INTERVAL_MS, predict, type Point } from './predict.ts';
-import type { NotificationPort, Outcome } from './notification.ts';
+import type { NotificationPort, Outcome, Status } from './notification.ts';
 import { CALL_RADIUS_M, callingAt, type Timetable, type VehicleReport } from './resolve.ts';
 import type { Signal, SignalPort, WithdrawalReason } from './signal.ts';
 import type { Json, recorder } from './trace.ts';
@@ -35,6 +36,8 @@ interface Hail {
   unattended: boolean;
   // Told confirmed or unacknowledged, at most one of them per signal: a move clears it (#61, #61-3).
   told: boolean;
+  // The Armed state the passenger was last told; waiting until told otherwise (#158).
+  status: Status['status'];
   // The vehicle runs this hail passed over for being too close to stop, never resolved to again (ADR-039 decision 2).
   skipped: Set<string>;
   // The run the hail last resolved to: its last pick, stale or fresh, except a stale pick already inside its stopping
@@ -96,6 +99,12 @@ export function hailCoordinator({ clock, record, signals, notify, schedule, time
     hails.delete(h.id);
   };
   const tell = (h: Hail, outcome: Omit<Outcome, 'stop' | 'route'>) => notify.outcome(h.handle, { stop: h.stopId, route: h.routeId, ...outcome });
+  // Tells the passenger the hail's Armed state only when it changes (#158).
+  const show = (h: Hail, status: Status['status']) => {
+    if (h.status === status) return;
+    h.status = status;
+    notify.status(h.handle, { stop: h.stopId, route: h.routeId, status });
+  };
   // Every abandonment is cannot hail, and says why (m1-revised.md §5.4; ADR-038's open item, #61).
   const abandon = (h: Hail, reason: 'stale' | 'deadline' | 'feed', vehicleId: string | null, next?: { nextDistanceM: number | null }) => {
     end(h, 'abandoned', { reason }, vehicleId);
@@ -202,12 +211,13 @@ export function hailCoordinator({ clock, record, signals, notify, schedule, time
       if (p.stale) {
         if ((purpose === 'deadline' && resolved) || (p.speedMps > 0 && !d)) return abandon(h, 'stale', vehicleId);
         if (d) wake(h, 'deadline', d.deadline);
-        return;
+        return show(h, 'stale');
       }
       // At speed 0 no deadline follows; a stopped vehicle within reach is due at once, and one beyond waits for its next
       // report (ADR-037's [DECIDED:05-10-2026]).
       if (p.speedMps === 0) {
         if (p.distanceM <= reach(p.report, h.stopId)) commit(h, p, null, now);
+        else show(h, 'waiting');
         return;
       }
       // Inside its stopping distance: abandoned if the hail had resolved to it, not passed to the next bus (ADR-039
@@ -220,9 +230,9 @@ export function hailCoordinator({ clock, record, signals, notify, schedule, time
         note(h, 'skipped', { candidates: [vehicleId] });
         continue;
       }
-      if (now >= d.deadline - FEED_INTERVAL_MS) commit(h, p, d.deadline, now);
-      else wake(h, 'commit', d.deadline - FEED_INTERVAL_MS);
-      return;
+      if (now >= d.deadline - FEED_INTERVAL_MS) return commit(h, p, d.deadline, now);
+      wake(h, 'commit', d.deadline - FEED_INTERVAL_MS);
+      return show(h, 'waiting');
     }
   };
   // C4, service-wide: a hail committed on a vehicle run at a stop joins that run's live signal there, or starts one (S4,
@@ -230,8 +240,10 @@ export function hailCoordinator({ clock, record, signals, notify, schedule, time
   // earliest of all (product.md §4 step 6). Committed is Delivered.
   const live = new Map<string, Signal>();
   // The signal keeps when it was first sent, and takes the predicted distance at its latest commit or join (ADR-038,
-  // decided 09-10-2026). A calling report always names its trip (callingAt).
+  // decided 09-10-2026). A calling report always names its trip (callingAt). A hail already committed is moving
+  // (reconsider), so the passenger is told moved, and otherwise sent (#158).
   const commit = (h: Hail, { report, distanceM }: { report: VehicleReport; distanceM: number }, deadline: number | null, now: number) => {
+    show(h, h.state === 'committed' ? 'moved' : 'sent');
     h.state = 'committed';
     h.wake = undefined;
     const place = JSON.stringify([run(report), h.stopId]);
@@ -293,7 +305,7 @@ export function hailCoordinator({ clock, record, signals, notify, schedule, time
       case 'register': {
         if (registration(event)) return;
         const { handle, stopId, routeId, leadTimeS } = event;
-        const h: Hail = { id: `h${++hailCount}`, handle, stopId, routeId, state: 'registered', left: false, unattended: false, told: false, skipped: new Set() };
+        const h: Hail = { id: `h${++hailCount}`, handle, stopId, routeId, state: 'registered', left: false, unattended: false, told: false, status: 'waiting', skipped: new Set() };
         hails.set(h.id, h);
         note(h, 'registered', { stopId, routeId, leadTimeS });
         // No hail lives while the feed is stale, so nothing predicts on it (#41; FR14).

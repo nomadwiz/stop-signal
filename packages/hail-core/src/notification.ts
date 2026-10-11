@@ -12,7 +12,16 @@ export interface Outcome {
   nextDistanceM?: number | null;
 }
 
+// #158: the hail's Armed state, which ArmedStatus shows until the outcome (ADR-032, annotated 11-10-2026; ADR-038).
+// Sent only when it changes; a hail starts waiting. It is no decision, so no record carries it.
+export interface Status {
+  stop: string;
+  route: string;
+  status: 'waiting' | 'sent' | 'moved' | 'stale';
+}
+
 // Synchronous, because the decision loop awaits nothing but its queue (ADR-002 rule 2).
 export interface NotificationPort {
   outcome(handle: string, outcome: Outcome): void;
+  status(handle: string, status: Status): void;
 }
