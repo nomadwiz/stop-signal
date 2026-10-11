@@ -26,8 +26,11 @@ const DWELL_MS = 30_000;
 // and a scenario's events are already in this shape (ADR-035 decision 5).
 export interface Timed { at: number; event: HailEvent }
 
+// A decoded snapshot: its capture time and its vehicle reports, one tick.
+export interface Snapshot { at: number; reports: VehicleReport[] }
+
 // The snapshots as ticks, merged with the events in time order. The sort is stable, so on a tie the tick goes first.
-export function inputs(snaps: readonly { at: number; reports: VehicleReport[] }[], events: readonly Timed[]): Timed[] {
+export function inputs(snaps: readonly Snapshot[], events: readonly Timed[]): Timed[] {
   const ticks = snaps.map(({ at, reports }): Timed => ({ at, event: { kind: 'tick', reports } }));
   return [...ticks, ...events].sort((a, b) => a.at - b.at);
 }
@@ -69,7 +72,7 @@ export const here = (path: string) => fileURLToPath(new URL(`../${path}`, import
 
 // The fixture window (ADR-030): its service day, and each snapshot decoded once, as C7 would hand it to the loop: the
 // whole decoded snapshot is one tick.
-export async function fixtures(): Promise<{ index: ServiceDay; snaps: { at: number; reports: VehicleReport[] }[] }> {
+export async function fixtures(): Promise<{ index: ServiceDay; snaps: Snapshot[] }> {
   const manifest = JSON.parse(readFileSync(here('fixtures/manifest.json'), 'utf8'));
   const index = await loadServiceDay(here('fixtures/gtfs.zip'), manifest.day);
   const snaps = [];

@@ -5,14 +5,13 @@
 // Usage: node packages/replay/src/resources.ts
 //   Replays every scenario under packages/replay/scenarios/ over the fixture window, timing each tick, then reads each
 //   decision log under packages/replay/expected/, which `npm run replay:check` holds to the replay, and prints per D and N
-//   `| N | Scenarios | Ticks | Processor time per tick, median / worst | Worst ÷ interval | Met |` and
+//   `| N | Scenarios | Ticks | Processor time per tick, median / worst | Worst of time ÷ interval | Met |` and
 //   `| N | Log bytes | Approaches | Bytes per approach | Approaches a day within 20 MB |`. About 40 s.
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { ServiceDay } from '../../hail-core/src/coordinator.ts';
-import type { VehicleReport } from '../../hail-core/src/resolve.ts';
 import { records, replayRuns } from '../../hail-service/src/replay-runs.ts';
-import { fixtures, inputs, replay, type Timed } from './replay.ts';
+import { fixtures, inputs, replay, type Snapshot, type Timed } from './replay.ts';
 
 // B6, read as 10^6 bytes to the MB, the smaller reading.
 const B6_BYTES = 20_000_000;
@@ -20,8 +19,9 @@ const B6_BYTES = 20_000_000;
 // Each tick's processor time and the interval to the next tick; the last tick has none, so is left out. A tick's time is
 // the loop's work from that tick until the next: the tick, the scenario events after it, and every wakeup that fires
 // before each of those. Taken with process.cpuUsage() around each input as replay() pulls it, so it counts the whole
-// process, garbage collection and the first ticks' compilation included, so the worst tick is an upper bound. Snapshot decoding is fixtures()'s, before the replay, and is not counted.
-export function cpuPerTick(index: ServiceDay, snaps: readonly { at: number; reports: VehicleReport[] }[], events: readonly Timed[]) {
+// process, garbage collection and the first ticks' compilation included, and the worst tick is an upper bound. Snapshot
+// decoding is fixtures()'s, before the replay, and is not counted.
+export function cpuPerTick(index: ServiceDay, snaps: readonly Snapshot[], events: readonly Timed[]) {
   const us: number[] = snaps.map(() => 0);
   function* timed() {
     // An event before the first tick is charged to it.
@@ -56,20 +56,20 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
   const runs = ['-n1.json', '-n5.json'].map((suffix) => replayRuns(suffix));
   const ms = (x: number) => `${x.toFixed(3)} ms`;
   for (const [i, { d }] of runs[0].entries()) {
-    const cpu = ['| N | Scenarios | Ticks | Processor time per tick, median / worst | Worst ÷ interval | Met |', '| --- | --- | --- | --- | --- | --- |'];
+    const cpu = ['| N | Scenarios | Ticks | Processor time per tick, median / worst | Worst of time ÷ interval | Met |', '| --- | --- | --- | --- | --- | --- |'];
     const disk = ['| N | Log bytes | Approaches | Bytes per approach | Approaches a day within 20 MB |', '| --- | --- | --- | --- | --- |'];
     for (const run of runs) {
       const { built, logs } = run[i];
       const ticks = built.flatMap((s) => cpuPerTick(index, snaps, s.events));
       const sorted = ticks.map((t) => t.cpuMs).sort((a, b) => a - b);
-      const worst = ticks.reduce((w, t) => (t.cpuMs / t.intervalMs > w.cpuMs / w.intervalMs ? t : w));
-      const ratio = worst.cpuMs / worst.intervalMs;
-      cpu.push(`| ${built[0].n} | ${built.length} | ${ticks.length} | ${ms(sorted[Math.ceil(sorted.length / 2) - 1])} / ${ms(worst.cpuMs)} | ${ratio.toExponential(2)} | ${ratio <= 0.5 ? 'yes' : 'no'} |`);
+      const ratio = ticks.reduce((r, t) => Math.max(r, t.cpuMs / t.intervalMs), 0);
+      cpu.push(`| ${built[0].n} | ${built.length} | ${ticks.length} | ${ms(sorted[Math.ceil(sorted.length / 2) - 1])} / ${ms(sorted[sorted.length - 1])} | ${ratio.toExponential(2)} | ${ratio <= 0.5 ? 'yes' : 'no'} |`);
       const { bytes, approaches } = bytesPerApproach(logs);
       disk.push(`| ${built[0].n} | ${bytes} | ${approaches} | ${(bytes / approaches).toFixed(0)} | ${Math.floor(B6_BYTES / (bytes / approaches))} |`);
     }
     console.log(`\nD = ${d.slice(1)} s\n\n${cpu.join('\n')}\n\n${disk.join('\n')}`);
   }
-  console.log('\nThe tick interval is each snapshot\'s gap to the next, 20.001–20.006 s in the fixture window (ADR-030).');
+  const gaps = snaps.slice(1).map((s, i) => (s.at - snaps[i].at) / 1000);
+  console.log(`\nThe tick interval is each snapshot's gap to the next: ${gaps.reduce((a, b) => Math.min(a, b))}–${gaps.reduce((a, b) => Math.max(a, b))} s in the fixture window.`);
   console.log('Growth per corridor per day is bytes per approach × approaches a day: [GAP: how many approaches the corridor sees in a day].');
 }
