@@ -19,6 +19,10 @@ Node.js 22.18 or later in the 22 LTS line, which runs TypeScript by stripping ty
     npm run typecheck   # tsc, no output
     npm run replay:check  # T7: replays every scenario over the fixtures; add `-- --write` to accept changed logs
 
+The passenger app needs Xcode 16 or later, and its tests run on an iPhone simulator. The `iPhone 17` simulator ships with Xcode 26 and later; with an older Xcode, name an iPhone it provides:
+
+    xcodebuild test -project ios/StopSignal.xcodeproj -scheme StopSignal -destination 'platform=iOS Simulator,name=iPhone 17'
+
 ## Where files belong
 
 | Path | What goes there |
@@ -28,5 +32,6 @@ Node.js 22.18 or later in the 22 LTS line, which runs TypeScript by stripping ty
 | `packages/console/` | The stand-in driver console |
 | `packages/feed-capture/` | The GTFS-Realtime poller that archives raw snapshots |
 | `packages/replay/` | The replay harness |
+| `ios/` | The passenger app. `ios/StopSignal/tokens.json` is a byte-identical copy of the documents repository's `doc/design/design-system/tokens.json` |
 | `infra/` | Scripts that stand up and check the AWS hosts |
 | `test/` | Guards over the whole repository |

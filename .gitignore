@@ -4,3 +4,4 @@ packages/console/dist/
 *.pem
 *.key
 .aws/
+xcuserdata/
