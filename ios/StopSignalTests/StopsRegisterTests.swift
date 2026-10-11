@@ -108,7 +108,8 @@ final class StopsRegisterTests: XCTestCase {
         ])
         XCTAssertTrue(element(check, "Arm hail for the 70").accessibilityActivate())
         for _ in 0..<50 where model.registration == nil { try await Task.sleep(for: .milliseconds(20)) }
-        XCTAssertEqual(StubProtocol.requests.first?.body, ["handle": "h", "stop": "7177-4660a5ff", "route": "70-205", "duration": 0])
+        // Arming also opens the outcome stream (#58).
+        XCTAssertEqual(StubProtocol.requests.filter { $0.url.path != "/outcomes" }.map(\.body), [["handle": "h", "stop": "7177-4660a5ff", "route": "70-205", "duration": 0]])
 
         let oneRoute = Stop.bundled.first { $0.routes.count == 1 }!
         XCTAssertEqual(elements(RegisterScreen(stop: oneRoute, model: model)).last?.accessibilityLabel, "Arm hail for the \(oneRoute.routes[0].shortName)")

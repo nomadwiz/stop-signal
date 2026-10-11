@@ -35,8 +35,9 @@ struct HailApi {
         stream.timeoutInterval = TimeInterval(Int32.max)
         let (lines, response) = try await session.bytes(for: stream)
         try check(response)
+        // An event this client cannot read is skipped, so it does not close the stream.
         for try await line in lines.lines where line.hasPrefix("data:") {
-            receive(try JSONDecoder().decode(Outcome.self, from: Data(line.dropFirst(5).utf8)))
+            if let event = try? JSONDecoder().decode(Outcome.self, from: Data(line.dropFirst(5).utf8)) { receive(event) }
         }
     }
 

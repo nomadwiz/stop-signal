@@ -32,16 +32,18 @@ final class PresenceTests: XCTestCase {
     override func setUp() {
         StubProtocol.requests = []
         StubProtocol.reply = Data()
+        StubProtocol.failing = false
+    }
+
+    // Closes the armed session, so no test's session outlives it.
+    override func tearDown() async throws {
+        try await model.cancel()
     }
 
     // Waits up to 2 s for `done`, and fails if it never comes.
     func until(line: UInt = #line, _ done: @escaping () -> Bool) async throws {
-        var tries = 0
-        while !done(), tries < 100 {
-            tries += 1
-            try await Task.sleep(for: .milliseconds(20))
-        }
-        XCTAssertLessThan(tries, 100, line: line)
+        for _ in 0..<100 where !done() { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertTrue(done(), line: line)
     }
 
     var presence: [String] {
@@ -55,23 +57,32 @@ final class PresenceTests: XCTestCase {
     // #58 acceptance 1, with ADR-045's rule: arriving within 50 m sends presence/start and leaving beyond 100 m sends
     // presence/end, each with the handle and stop alone, so no device time (ADR-031 decision 2; ADR-032 decision 1). A
     // fix between the two radii, one less accurate than 50 m or of unknown accuracy, and one taken while the phone is
-    // stationary each change nothing.
+    // stationary each change nothing. A new session's first fix outside the gap reports either way.
     func testArrivingSendsPresenceStartAndLeavingSendsPresenceEndWithNoDeviceTime() async throws {
-        try await model.register(stop: melrose, route: "70-205", duration: 0)
-        fixes.send(70, from: melrose)
-        fixes.send(40, from: melrose, accuracy: 80)
-        fixes.send(40, from: melrose, stationary: true)
-        fixes.send(40, from: melrose)
-        fixes.send(90, from: melrose)
-        fixes.send(130, from: melrose, accuracy: -1)
-        fixes.send(130, from: melrose, stationary: true)
-        fixes.send(130, from: melrose)
+        func present(_ metres: Double, accuracy: Double = 5, stationary: Bool = false, was: Bool?) -> Bool? {
+            let at = CLLocationCoordinate2D(latitude: melrose.lat + metres / 111_000, longitude: melrose.lon)
+            let fix = Fix(location: CLLocation(coordinate: at, altitude: 0, horizontalAccuracy: accuracy, verticalAccuracy: -1, timestamp: .now), stationary: stationary)
+            return fix.present(at: melrose.location, was: was)
+        }
+        XCTAssertEqual(present(49, was: false), true)
+        XCTAssertEqual(present(52, was: false), false)
+        XCTAssertEqual(present(99, was: true), true)
+        XCTAssertEqual(present(102, was: true), false)
+        XCTAssertEqual(present(10, accuracy: 51, was: false), false)
+        XCTAssertEqual(present(10, accuracy: -1, was: false), false)
+        XCTAssertEqual(present(10, accuracy: 50, was: false), true)
+        XCTAssertEqual(present(200, stationary: true, was: true), true)
+        XCTAssertEqual(present(200, was: nil), false)
+        XCTAssertEqual(present(75, was: nil), nil)
 
-        try await until { [self] in presence.count == 2 }
+        try await model.register(stop: melrose, route: "70-205", duration: 0)
+        fixes.send(130, from: melrose)
+        fixes.send(40, from: melrose)
+        fixes.send(130, from: melrose)
+        try await until { [self] in presence.count == 3 }
         let sent = StubProtocol.requests.filter { $0.url.path.hasPrefix("/presence") }
-        XCTAssertEqual(sent.map(\.url.path), ["/presence/start", "/presence/end"])
-        XCTAssertEqual(sent.map(\.body), [["handle": "h", "stop": melrose.id], ["handle": "h", "stop": melrose.id]])
-        XCTAssertFalse(model.present)
+        XCTAssertEqual(sent.map(\.url.path), ["/presence/end", "/presence/start", "/presence/end"])
+        XCTAssertEqual(sent.map(\.body), Array(repeating: ["handle": "h", "stop": melrose.id], count: 3))
     }
 
     // #58 acceptance 2: no coordinate leaves the device. Every request through an armed session carries only QR8's
@@ -83,7 +94,7 @@ final class PresenceTests: XCTestCase {
         try await until { [self] in presence.count == 2 }
         try await model.cancel()
 
-        XCTAssertEqual(Set(StubProtocol.requests.map(\.url.path)), ["/register", "/outcomes", "/presence/start", "/presence/end", "/cancel"])
+        XCTAssertEqual(StubProtocol.requests.map(\.url.path).filter { $0 != "/outcomes" }, ["/register", "/presence/start", "/presence/end", "/cancel"])
         for request in StubProtocol.requests {
             XCTAssertTrue(Set(request.body.allKeys as! [String]).isSubset(of: ["handle", "stop", "route", "duration"]), request.url.path)
             XCTAssertNil(request.url.query, request.url.path)
@@ -96,7 +107,7 @@ final class PresenceTests: XCTestCase {
         StubProtocol.reply = Data(("event: status\ndata: {\"stop\":\"7177-4660a5ff\",\"route\":\"70-205\",\"status\":\"sent\"}\n\n" + outcome("confirmed") + outcome("unacknowledged")).utf8)
         try await model.register(stop: melrose, route: "70-205", duration: 0)
         fixes.send(10, from: melrose)
-        try await until { [self] in model.present && model.outcome?.outcome == "unacknowledged" }
+        try await until { [self] in model.present == true && model.outcome?.outcome == "unacknowledged" }
         XCTAssertTrue(model.delivered)
         XCTAssertFalse(fixes.closed)
         fixes.send(200, from: melrose)
@@ -115,6 +126,16 @@ final class PresenceTests: XCTestCase {
         try await third.register(stop: melrose, route: "70-205", duration: 0)
         try await third.cancel()
         try await until { cancelled.closed }
+
+        // The session opens before the registration's round trip (ADR-009, annotated 02-10-2026), so a failed one
+        // closes it.
+        StubProtocol.failing = true
+        let failed = FakeFixes()
+        let fourth = HailViewModel(api: HailApi(base: URL(string: "https://hail.test")!, handle: "h", session: StubProtocol.session), fixes: failed)
+        do { try await fourth.register(stop: melrose, route: "70-205", duration: 0) } catch {}
+        XCTAssertNil(fourth.registration)
+        try await until { failed.closed }
+        StubProtocol.failing = false
     }
 
     // #58 acceptance 4: with nothing delivered, a departure keeps the session open, and a return to the stop sends
@@ -128,7 +149,7 @@ final class PresenceTests: XCTestCase {
         try await until { [self] in presence.count == 3 }
         XCTAssertEqual(presence, ["/presence/start", "/presence/end", "/presence/start"])
         XCTAssertFalse(fixes.closed)
-        XCTAssertTrue(model.present)
+        XCTAssertEqual(model.present, true)
     }
 
     // #58 acceptance 5, the part the simulator can prove (the owner's decision of 11-10-2026): the app declares the

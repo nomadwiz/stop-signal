@@ -8,10 +8,14 @@ struct Fix: Sendable {
 
     // ADR-045: a phone arrives within 50 m of the stop and leaves beyond 100 m, so a fix between the two changes
     // nothing. A fix of unknown accuracy or one worse than 50 m changes nothing, nor does one taken while stationary.
-    func present(at stop: CLLocation, was present: Bool) -> Bool {
+    // A new session starts unknown (nil), so its first fix outside the gap reports either way: the service holds a
+    // passenger's presence at a stop until a presence-end (ADR-040, annotated 07-10-2026), and a session closed on
+    // cancel or cannot-hail while present sends none.
+    func present(at stop: CLLocation, was present: Bool?) -> Bool? {
         let accuracy = location.horizontalAccuracy
         guard !stationary, accuracy >= 0, accuracy <= 50 else { return present }
-        return location.distance(from: stop) <= (present ? 100 : 50)
+        let metres = location.distance(from: stop)
+        return metres <= 50 ? true : metres > 100 ? false : present
     }
 }
 

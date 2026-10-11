@@ -7,8 +7,17 @@ import XCTest
 // Answers every request in place of the network and keeps what it was sent: 200 with `reply` for the
 // outcome stream, 204 with no body for the other routes, as packages/hail-service/src/server.ts answers.
 final class StubProtocol: URLProtocol {
-    nonisolated(unsafe) static var requests: [(method: String, url: URL, body: NSDictionary, timeout: TimeInterval)] = []
+    typealias Request = (method: String, url: URL, body: NSDictionary, timeout: TimeInterval)
+    // URLSession loads requests on its own threads, several at once while a hail is armed (#58), so the log is locked.
+    private nonisolated(unsafe) static var log: [Request] = []
+    private static let lock = NSLock()
+    static var requests: [Request] {
+        get { lock.withLock { log } }
+        set { lock.withLock { log = newValue } }
+    }
     nonisolated(unsafe) static var reply = Data()
+    // Set, every route but the stream answers 500.
+    nonisolated(unsafe) static var failing = false
 
     static var session: URLSession {
         let configuration = URLSessionConfiguration.ephemeral
@@ -30,9 +39,10 @@ final class StubProtocol: URLProtocol {
             bytes.append(buffer, count: count)
         }
         stream.close()
-        Self.requests.append((request.httpMethod!, request.url!, try! JSONSerialization.jsonObject(with: bytes) as! NSDictionary, request.timeoutInterval))
+        let body = try! JSONSerialization.jsonObject(with: bytes) as! NSDictionary
+        Self.lock.withLock { Self.log.append((request.httpMethod!, request.url!, body, request.timeoutInterval)) }
         let streaming = request.url!.path == "/outcomes"
-        let response = HTTPURLResponse(url: request.url!, statusCode: streaming ? 200 : 204, httpVersion: nil, headerFields: nil)!
+        let response = HTTPURLResponse(url: request.url!, statusCode: streaming ? 200 : Self.failing ? 500 : 204, httpVersion: nil, headerFields: nil)!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         if streaming { client?.urlProtocol(self, didLoad: Self.reply) }
         client?.urlProtocolDidFinishLoading(self)
@@ -47,6 +57,7 @@ final class StopSignalTests: XCTestCase {
     override func setUp() {
         StubProtocol.requests = []
         StubProtocol.reply = Data()
+        StubProtocol.failing = false
     }
 
     // m1-revised.md §6.1: iOS 17.0 or later, iPhone, portrait only.
