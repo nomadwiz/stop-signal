@@ -16,23 +16,19 @@
 //   (ADR-034 decision 2) and a total.
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import type { DecisionRecord } from '../../hail-core/src/trace.ts';
 import type { Group } from './m1.ts';
-import { replayRuns } from './replay-runs.ts';
+import { records, replayRuns } from './replay-runs.ts';
 import type { Scenario } from './scenarios.ts';
 
 export interface M4b { approaches: number; corrected: number; retractions: number; late: number }
 
-// ponytail: a scenario replays one window at one stop, so a vehicle's run there is its vehicle (as in m4a.ts).
 export function m4b(log: readonly string[]): M4b {
-  const stopOf = new Map<string, string>();
   const on = new Map<string, { approach: string; signalId: string; deadline: number | null }>();
   const approaches = new Set<string>();
   const corrected = new Set<string>();
   let retractions = 0;
   let late = 0;
-  for (const { kind, at, hailId, vehicleId, payload } of log.map((l): DecisionRecord => JSON.parse(l))) {
-    if (kind === 'registered') stopOf.set(hailId!, payload.stopId as string);
+  for (const { kind, at, hailId, approach, payload } of records(log)) {
     if (['spent', 'withdrawn', 'abandoned'].includes(kind)) on.delete(hailId!);
     if (kind !== 'committed') continue;
     const was = on.get(hailId!);
@@ -41,9 +37,8 @@ export function m4b(log: readonly string[]): M4b {
       retractions++;
       if (was.deadline === null || at >= was.deadline) late++;
     }
-    const approach = JSON.stringify([vehicleId, stopOf.get(hailId!)]);
-    approaches.add(approach);
-    on.set(hailId!, { approach, signalId: payload.signalId as string, deadline: payload.deadline as number | null });
+    approaches.add(approach!);
+    on.set(hailId!, { approach: approach!, signalId: payload.signalId as string, deadline: payload.deadline as number | null });
   }
   return { approaches: approaches.size, corrected: corrected.size, retractions, late };
 }
