@@ -17,8 +17,12 @@ import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gunzipSync } from 'node:zlib';
 import bindings, { type transit_realtime } from 'gtfs-realtime-bindings';
+import type { HailEvent } from '../../hail-core/src/events.ts';
 import type { VehicleReport } from '../../hail-core/src/resolve.ts';
+import { requestFeed } from '../../feed-capture/src/capture.ts';
 import { loadServiceDay, type StaticIndex } from './gtfs-static.ts';
+
+const decode = (bytes: Uint8Array) => bindings.transit_realtime.FeedMessage.decode(bytes);
 
 // Every snapshot capture archived under root with from <= its epoch-ms < to, decoded, in time order.
 // Keyed by time, never by folder: folders are UTC dates and a New Zealand day spans two.
@@ -28,7 +32,7 @@ export async function* snapshots(root: string, from: number, to: number): AsyncG
     .map((path) => ({ path, at: Number(basename(path, '.pb.gz')) }))
     .filter(({ at }) => from <= at && at < to)
     .sort((a, b) => a.at - b.at);
-  for (const { path, at } of files) yield { at, feed: bindings.transit_realtime.FeedMessage.decode(gunzipSync(await readFile(join(root, path)))) };
+  for (const { path, at } of files) yield { at, feed: decode(gunzipSync(await readFile(join(root, path)))) };
 }
 
 // earlierOnly: matched, but not through the last day named, such as a Friday trip seen on Saturday.
@@ -58,7 +62,7 @@ export async function tripCoverage(root: string, from: number, to: number, days:
       bucket = { records: 0, withTrip: 0, matched: 0, earlierOnly: 0, recovered: 0 };
       byHour.set(hour, bucket);
     }
-    const feed = bindings.transit_realtime.FeedMessage.decode(gunzipSync(await readFile(join(root, path))));
+    const feed = decode(gunzipSync(await readFile(join(root, path))));
     const recovered = tripsFromUpdates(feed, index);
     for (const entity of feed.entity) {
       if (!entity.vehicle) continue;
@@ -127,6 +131,33 @@ export function vehicleReports(feed: transit_realtime.FeedMessage, index: Pick<S
     reports.push({ vehicleId, ...trip, lat: vehicle.position.latitude, lon: vehicle.position.longitude, at });
   }
   return reports;
+}
+
+interface Poll {
+  key: string;
+  fetchFeed: typeof fetch;
+  index: Pick<StaticIndex, 'trips' | 'lateTrips'>;
+  submit: (event: HailEvent) => void;
+  log: (line: string) => void;
+}
+
+// C7's live source (ADR-044): one request for the feed, as capture makes it, submitted to the loop as one tick.
+// A failed or non-OK request submits nothing and resolves, so the next poll runs; the gap is the feed-stale wakeup's.
+export async function pollFeed({ key, fetchFeed, index, submit, log }: Poll): Promise<void> {
+  try {
+    const response = await requestFeed(key, fetchFeed);
+    if (!response.ok) {
+      // An unread body holds its socket open until garbage collection.
+      await response.body?.cancel();
+      log(`feed poll: ${response.status}, no tick`);
+      return;
+    }
+    submit({ kind: 'tick', reports: vehicleReports(decode(new Uint8Array(await response.arrayBuffer())), index) });
+  } catch (error) {
+    // fetch reports every network failure as "fetch failed"; the reason is in its cause.
+    const cause = error instanceof Error && error.cause ? ` (${error.cause})` : '';
+    log(`feed poll: ${error}${cause}, no tick`);
+  }
 }
 
 const percent = (part: number, whole: number) => (whole ? `${((100 * part) / whole).toFixed(1)}%` : '—');

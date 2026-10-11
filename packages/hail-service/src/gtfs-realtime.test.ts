@@ -4,9 +4,11 @@ import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import bindings from 'gtfs-realtime-bindings';
 import { describe, expect, it } from 'vitest';
+import type { HailEvent } from '../../hail-core/src/events.ts';
+import { FEED_URL } from '../../feed-capture/src/capture.ts';
 import type { StaticIndex, Trip } from './gtfs-static.ts';
 import { predict } from '../../hail-core/src/predict.ts';
-import { snapshots, tripCoverage, tripsFromUpdates, vehicleReports } from './gtfs-realtime.ts';
+import { pollFeed, snapshots, tripCoverage, tripsFromUpdates, vehicleReports } from './gtfs-realtime.ts';
 
 const { FeedMessage } = bindings.transit_realtime;
 // One service day's trip_ids, as the counter takes them.
@@ -255,5 +257,36 @@ describe('vehicleReports', () => {
     const { speedMps } = predict([{ lat: -36.88, lon: 174.75 }, { lat: -36.86, lon: 174.75 }], { lat: -36.865, lon: 174.75 }, earlier[0], later[0], NOW * 1000);
 
     expect(speedMps).toBeCloseTo(10.86, 2);
+  });
+});
+
+describe('pollFeed', () => {
+  it("submits a fetched snapshot to the loop as one tick of its vehicle reports, asking capture's URL with the key (ADR-044)", async () => {
+    // Copied into a plain Uint8Array, the body type Response takes.
+    const bytes = new Uint8Array(FeedMessage.encode(FeedMessage.fromObject({ header: { gtfsRealtimeVersion: '2.0', timestamp: NOW }, entity: [located('v1', T1)] })).finish());
+    let seen: Request | undefined;
+    const fetchFeed = async (input: string | URL | Request, init?: RequestInit) => {
+      seen = new Request(input, init);
+      return new Response(bytes);
+    };
+    const submitted: HailEvent[] = [];
+
+    await pollFeed({ key: 'test-key', fetchFeed, index: INDEX, submit: (e) => submitted.push(e), log: () => {} });
+
+    expect(seen?.url).toBe(FEED_URL);
+    expect(seen?.headers.get('Ocp-Apim-Subscription-Key')).toBe('test-key');
+    expect(submitted).toEqual([{ kind: 'tick', reports: [{ vehicleId: 'v1', tripId: 'T1', startDate: '20261003', lat: -36.875, lon: 174.75, at: (NOW - 8) * 1000 }] }]);
+  });
+
+  it('submits nothing on a failed or non-OK fetch, logs it, and resolves, so the next poll still runs', async () => {
+    const submitted: HailEvent[] = [];
+    const logged: string[] = [];
+    const poll = (fetchFeed: typeof fetch) => pollFeed({ key: 'k', fetchFeed, index: INDEX, submit: (e) => submitted.push(e), log: (line) => logged.push(line) });
+
+    await poll(async () => new Response('quota', { status: 403 }));
+    await poll(async () => Promise.reject(new TypeError('fetch failed', { cause: new Error('ECONNRESET') })));
+
+    expect(submitted).toEqual([]);
+    expect(logged).toEqual([expect.stringContaining('403'), expect.stringContaining('ECONNRESET')]);
   });
 });
