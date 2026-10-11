@@ -392,6 +392,23 @@ jobs:
             exit 0
           fi
 
+          # ios.yml's xctest runs only on a push that changes ios/, so master
+          # cannot require it: on any other pull request it never reports, and
+          # a required check that never reports blocks the merge. Waited for
+          # here instead, by its run on the reviewed commit. A head whose push
+          # left ios/ alone has no run, and nothing tested what would merge.
+          if grep -q '^ios/' <<<"$files"; then
+            run=$(gh run list -R "$REPO" --workflow ios.yml --commit "$HEAD_SHA" --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+            if [ -z "$run" ]; then
+              echo "::warning::This pull request changes ios/, and xctest never ran on $HEAD_SHA. Push a commit that changes ios/, or merge by hand. Not merging."
+              exit 0
+            fi
+            if ! gh run watch "$run" -R "$REPO" --exit-status; then
+              echo "::warning::xctest did not pass on $HEAD_SHA. Not merging."
+              exit 0
+            fi
+          fi
+
           # Squashed, so one pull request is one commit on $BASE, which is the
           # documents' CLAUDE.md's "one commit per coherent change". GitHub writes
           # a Co-authored-by trailer for every author in the squashed range, so no
