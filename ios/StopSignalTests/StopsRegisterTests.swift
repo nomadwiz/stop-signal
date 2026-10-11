@@ -42,6 +42,10 @@ final class StopsRegisterTests: XCTestCase {
         elements(host(view))
     }
 
+    func model(_ session: URLSession = .shared) -> HailViewModel {
+        HailViewModel(api: HailApi(base: URL(string: "https://hail.test")!, handle: "h", session: session))
+    }
+
     func element(_ elements: [NSObject], _ label: String) -> NSObject {
         elements.first { $0.accessibilityLabel == label }!
     }
@@ -77,21 +81,21 @@ final class StopsRegisterTests: XCTestCase {
         XCTAssertEqual(Stop.found(" 7177 ", near: nil).map(\.id), ["7177-4660a5ff"])
         XCTAssertEqual(Stop.found("no such stop", near: nil), [])
 
-        let here = CLLocation(latitude: melrose.lat, longitude: melrose.lon)
+        let here = melrose.location
         let nearby = Stop.found("", near: here)
         XCTAssertEqual(nearby.count, Stop.bundled.count)
         XCTAssertEqual(nearby.first?.id, melrose.id)
-        let metres = nearby.map { here.distance(from: CLLocation(latitude: $0.lat, longitude: $0.lon)) }
+        let metres = nearby.map { here.distance(from: $0.location) }
         XCTAssertEqual(metres, metres.sorted())
 
-        let rows = elements(StopsScreen(model: HailViewModel(api: HailApi(base: URL(string: "https://hail.test")!, handle: "h")), here: here))
+        let rows = elements(StopsScreen(model: model(), here: here))
         XCTAssertEqual(rows.first { $0.accessibilityLabel?.hasPrefix("Melrose Street") == true }?.accessibilityLabel, "Melrose Street, stop 7177, 0 m away. Routes 30, 64, 70, 75, 295, 309, INN.")
     }
 
     // #54 acceptance 2: route and stop on one screen, each with its own Change, before arming; a stop with several
     // routes asks for the route first, and Arm registers that stop and route with duration 0.
     func testRouteAndStopAreConfirmedOnOneScreenEachWithItsOwnChangeBeforeArming() async throws {
-        let model = HailViewModel(api: HailApi(base: URL(string: "https://hail.test")!, handle: "h", session: StubProtocol.session))
+        let model = model(StubProtocol.session)
         let screen = host(RegisterScreen(stop: melrose, model: model))
 
         let routes = elements(screen)
@@ -131,14 +135,31 @@ final class StopsRegisterTests: XCTestCase {
             }
         }
 
-        let check = elements(RegisterScreen(stop: Stop.bundled.first { $0.routes.count == 1 }!, model: HailViewModel(api: HailApi(base: URL(string: "https://hail.test")!, handle: "h"))))
+        let check = elements(RegisterScreen(stop: Stop.bundled.first { $0.routes.count == 1 }!, model: model()))
         XCTAssertEqual(check.last!.accessibilityFrame.height, 64)
         for label in ["Change route", "Change stop"] {
             XCTAssertGreaterThanOrEqual(element(check, label).accessibilityFrame.height, 44, label)
             XCTAssertGreaterThanOrEqual(element(check, label).accessibilityFrame.width, 44, label)
         }
-        let rows = elements(RegisterScreen(stop: melrose, model: HailViewModel(api: HailApi(base: URL(string: "https://hail.test")!, handle: "h"))))
+        let rows = elements(RegisterScreen(stop: melrose, model: model()))
         XCTAssertEqual(rows.count, melrose.routes.count)
         for row in rows { XCTAssertGreaterThanOrEqual(row.accessibilityFrame.height, 44, row.accessibilityLabel ?? "") }
+    }
+
+    // design-system README §Type: nothing truncates. Route chips wrap to a second row, and at the accessibility text
+    // sizes ConfirmPanel's Change buttons stack under what they change.
+    func testRouteChipsWrapAndConfirmPanelStacksAtTheLargestSizes() {
+        let chips = elements(Flow(spacing: 4) { ForEach(["30", "64", "70", "75", "295", "309", "INN"], id: \.self) { RouteChip(route: $0) } }.frame(width: 120))
+        XCTAssertEqual(chips.count, 7)
+        XCTAssertGreaterThan(chips.last!.accessibilityFrame.minY, chips.first!.accessibilityFrame.maxY)
+
+        let oneRoute = Stop.bundled.first { $0.routes.count == 1 }!
+        func changeRouteIsBelowTheRoute(_ size: DynamicTypeSize) -> Bool {
+            let check = elements(RegisterScreen(stop: oneRoute, model: model()).environment(\.dynamicTypeSize, size))
+            let route = element(check, "Route \(oneRoute.routes[0].shortName), \(oneRoute.routes[0].destination)")
+            return element(check, "Change route").accessibilityFrame.minY >= route.accessibilityFrame.maxY
+        }
+        XCTAssertFalse(changeRouteIsBelowTheRoute(.large))
+        XCTAssertTrue(changeRouteIsBelowTheRoute(.accessibility5))
     }
 }
