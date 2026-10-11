@@ -51,6 +51,7 @@ describe('report', () => {
     expect(lines).toContain('| M3, told the outcome before the bus called | 1 / 3 = 33.3% | ≥ 99% | no |');
     expect(lines).toContain('Within M3: 1 hails committed on a stopped vehicle were spent before their run stopped calling, so were told no outcome (ADR-032 and ADR-038, annotated 09-10-2026).');
     expect(lines).toContain('M2 leaves out the 1 commits on a stopped vehicle because they have no deadline, so no margin before one (ADR-037).');
+    expect(lines).toContain("M3's 2 not told before the bus called: 1 committed on a stopped vehicle, told nothing; 1 committed with a deadline and spent before it, told nothing; 0 never committed or abandoned; 0 told after the call.");
     expect(lines).toContain('| M4a, signals per approach | 1 on 2 of 2 approaches | Exactly 1 | yes |');
     expect(lines).toContain('| M4b, approaches with a correction | 0 / 2 = 0.0% | ≤ 10% | yes |');
     expect(lines).toContain('| M4c, approaches reaching their deadline in Unattended | 1 / 2 = 50.0% | ≤ 5% | no |');
