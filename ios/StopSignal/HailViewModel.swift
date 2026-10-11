@@ -30,12 +30,12 @@ final class HailViewModel {
     // The session opens before the registration's round trip, while the passenger is still tapping Arm, because only
     // a session made in the foreground becomes active (CLBackgroundActivitySession.h; ADR-009, annotated 02-10-2026).
     func register(stop: Stop, route: String, duration: Int) async throws {
-        let fixes = fixes.open()
+        let opened = fixes.open()
         do {
             try await api.register(stop: stop.id, route: route, duration: duration)
         } catch {
             // ponytail: a stream nobody reads never ends, so it is read in a cancelled task, which ends it at once.
-            Task { for await _ in fixes {} }.cancel()
+            Task { for await _ in opened {} }.cancel()
             throw error
         }
         close()
@@ -43,7 +43,7 @@ final class HailViewModel {
         (present, delivered, outcome) = (nil, false, nil)
         armed = Task {
             async let stream: Void = listen()
-            await sense(stop, fixes)
+            await sense(stop, opened)
             await stream
         }
     }
