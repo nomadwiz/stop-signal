@@ -1049,12 +1049,13 @@ describe('hailCoordinator: the Armed state (#158)', () => {
   it('sends stale when the resolved pick goes stale before commit, and waiting when it turns fresh again', () => {
     const s = service();
     s.at(T - 40_000, register, start);
-    for (const t of [T - 20_000, T]) s.tick(t, v1(t));
+    // V1 stands 450 m out, beyond the stopped-vehicle reach; the next test returns a moving pick to waiting.
+    for (const t of [T - 20_000, T]) s.tick(t, v1(t, 450));
     // The feed stays live, re-serving V1's fix from T, 40 s old by T + 40 s.
-    for (const t of [T + 20_000, T + 40_000]) s.tick(t, v1(T));
+    for (const t of [T + 20_000, T + 40_000]) s.tick(t, v1(T, 450));
     expect(s.statuses).toEqual([shown('stale')]);
 
-    s.tick(T + 41_000, v1(T + 41_000));
+    s.tick(T + 41_000, v1(T + 41_000, 450));
 
     expect(s.statuses).toEqual([shown('stale'), shown('waiting')]);
   });
