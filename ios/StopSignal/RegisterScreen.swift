@@ -60,7 +60,7 @@ struct RegisterScreen: View {
         arming = true
         Task {
             defer { arming = false }
-            do { try await model.register(stop: stop.id, route: route.id, duration: 0) } catch { failed = true }
+            do { try await model.register(stop: stop, route: route.id, duration: 0) } catch { failed = true }
         }
     }
 }
