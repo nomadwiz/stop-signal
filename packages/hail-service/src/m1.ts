@@ -13,7 +13,8 @@ import { replayRuns } from './replay-runs.ts';
 import type { Scenario } from './scenarios.ts';
 
 // One hail as its decision log tells it: its route and the call its passengers want (ADR-035 decision 3), when it was
-// registered and became eligible, its first commit, its abandonment, and every skip it wrote.
+// registered and became eligible, its first commit, its abandonment, when it was first told an outcome (#61), and every
+// skip it wrote.
 export interface Hail {
   routeId: string;
   target: Scenario['calls'][number];
@@ -21,6 +22,7 @@ export interface Hail {
   eligible?: number;
   committed?: { at: number; vehicleId: string; deadline: number | null };
   abandoned?: string;
+  told?: number;
   skipped: { at: number; candidates: string[] }[];
 }
 
@@ -37,6 +39,7 @@ export function hails(scenario: Scenario, log: readonly string[]): Hail[] {
     if (kind === 'eligible') h.eligible ??= at;
     if (kind === 'committed') h.committed ??= { at, vehicleId: vehicleId!, deadline: payload.deadline as number | null };
     if (kind === 'abandoned') h.abandoned = payload.reason as string;
+    if (['unacknowledged', 'confirmed', 'abandoned'].includes(kind)) h.told ??= at;
     if (kind === 'skipped') h.skipped.push({ at, candidates: payload.candidates as string[] });
   }
   return [...byId.values()];
