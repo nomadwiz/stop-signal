@@ -8,8 +8,7 @@
 //   which `npm run replay:check` holds to the replay, and prints for each D the table `| Class | Calls | M1 |`.
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import type { DecisionRecord } from '../../hail-core/src/trace.ts';
-import { replayRuns } from './replay-runs.ts';
+import { records, replayRuns } from './replay-runs.ts';
 import type { Scenario } from './scenarios.ts';
 
 // One hail as its decision log tells it: its route and the call its passengers want (ADR-035 decision 3), when it was
@@ -29,7 +28,7 @@ export interface Hail {
 // Every hail in a scenario's decision log, in the order registered.
 export function hails(scenario: Scenario, log: readonly string[]): Hail[] {
   const byId = new Map<string, Hail>();
-  for (const { at, kind, hailId, vehicleId, payload } of log.map((l): DecisionRecord => JSON.parse(l))) {
+  for (const { at, kind, hailId, vehicleId, payload } of records(log)) {
     if (kind === 'registered') {
       const routeId = payload.routeId as string;
       byId.set(hailId!, { routeId, target: scenario.calls.find((c) => c.routeId === routeId)!, registered: at, skipped: [] });

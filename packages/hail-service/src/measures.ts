@@ -10,14 +10,11 @@
 //   `| Measure | Result | Target | Met |`, then what each count leaves out.
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import type { DecisionRecord } from '../../hail-core/src/trace.ts';
 import { hails, m1, type Tally } from './m1.ts';
 import { m4a } from './m4a.ts';
 import { m4b } from './m4b.ts';
-import { replayRuns } from './replay-runs.ts';
+import { records, replayRuns } from './replay-runs.ts';
 import type { Scenario } from './scenarios.ts';
-
-const records = (log: readonly string[]) => log.map((l): DecisionRecord => JSON.parse(l));
 
 // M2: each signal's margin before its own deadline, the last safe stopping point (ADR-023), from every `committed`
 // record, which hands the hail's signal to SignalPort in the same transition (ADR-017). The target is that the worst
@@ -36,7 +33,7 @@ export function m2(logs: readonly (readonly string[])[]) {
 }
 
 // M3: hails told an outcome, confirmed, unacknowledged or cannot hail (#61), before their target bus called at the stop
-// on the oracle's time. A hail committed on a stopped vehicle is spent before its bus passes, so it is told no outcome
+// on the oracle's time. A hail committed on a stopped vehicle and spent before its run stops calling is told no outcome
 // (ADR-032 and ADR-038, annotated 09-10-2026); it is counted apart, so it is not read as a notification failure (#66).
 // ponytail: scored on each hail's first commit, as M1 is; no fixture scenario moves a hail.
 export function m3(built: readonly Scenario[], logs: readonly (readonly string[])[]) {
@@ -53,9 +50,7 @@ export function m3(built: readonly Scenario[], logs: readonly (readonly string[]
 // M4c: approaches whose hail reached its deadline in Unattended (ADR-010 decision 6, `doc/design/product.md` §3): marked
 // `unattended` and still on that approach, not spent, withdrawn, abandoned or moved, when its deadline came. A reported
 // departure, `left`, ends Unattended (ADR-040 decision 5). A commit on a stopped vehicle has no deadline to reach.
-// ponytail: a scenario replays one window at one stop, so a vehicle's run there is its vehicle (as in m4a.ts).
 export function m4c(log: readonly string[]): number {
-  const stopOf = new Map<string, string>();
   const unattendedAt = new Map<string, number>();
   const on = new Map<string, { approach: string; deadline: number | null }>();
   const counted = new Set<string>();
@@ -65,12 +60,11 @@ export function m4c(log: readonly string[]): number {
     if (was?.deadline != null && since !== undefined && since <= was.deadline && was.deadline <= at) counted.add(was.approach);
     on.delete(hailId);
   };
-  for (const { kind, at, hailId, vehicleId, payload } of records(log)) {
-    if (kind === 'registered') stopOf.set(hailId!, payload.stopId as string);
+  for (const { kind, at, hailId, approach, payload } of records(log)) {
     if (kind === 'left') unattendedAt.delete(hailId!);
     if (kind === 'unattended') unattendedAt.set(hailId!, at);
     if (['spent', 'withdrawn', 'abandoned', 'committed'].includes(kind)) leave(hailId!, at);
-    if (kind === 'committed') on.set(hailId!, { approach: JSON.stringify([vehicleId, stopOf.get(hailId!)]), deadline: payload.deadline as number | null });
+    if (kind === 'committed') on.set(hailId!, { approach: approach!, deadline: payload.deadline as number | null });
   }
   for (const hailId of [...on.keys()]) leave(hailId, Infinity);
   return counted.size;
@@ -78,7 +72,8 @@ export function m4c(log: readonly string[]): number {
 
 type Run = { built: Scenario[]; logs: string[][] };
 const pct = (k: number, n: number) => (n ? `${((100 * k) / n).toFixed(1)}%` : '—');
-const yes = (met: boolean) => (met ? 'yes' : 'no');
+// Met, or — when the measure has nothing to count.
+const met = (n: number, ok: boolean) => (!n ? '—' : ok ? 'yes' : 'no');
 
 // One D's tables and notes, from its N = 1 and N = 5 runs.
 export function report(n1: Run, n5: Run): string[] {
@@ -104,19 +99,19 @@ export function report(n1: Run, n5: Run): string[] {
     '',
     '| Measure | Result | Target | Met |',
     '| --- | --- | --- | --- |',
-    `| M1, single on both | ${pct(t['single-on-both'].right, t['single-on-both'].calls)} | ≥ 95% | ${yes(t['single-on-both'].right >= 0.95 * t['single-on-both'].calls)} |`,
-    `| M1, queued on both | ${pct(t['queued-on-both'].right, t['queued-on-both'].calls)} | ≥ 80% | ${yes(t['queued-on-both'].right >= 0.8 * t['queued-on-both'].calls)} |`,
-    `| M2, worst tenth's margin before the deadline | ${s(m2r.worstTenthMs)}; ${m2r.early} of ${m2r.signals} signals early | Worst tenth still early: > 0 s | ${yes(m2r.worstTenthMs > 0)} |`,
-    `| M3, told the outcome before the bus called | ${m3r.before} / ${told} = ${pct(m3r.before, told)} | ≥ 99% | ${yes(m3r.before >= 0.99 * told)} |`,
+    `| M1, single on both | ${pct(t['single-on-both'].right, t['single-on-both'].calls)} | ≥ 95% | ${met(t['single-on-both'].calls, t['single-on-both'].right >= 0.95 * t['single-on-both'].calls)} |`,
+    `| M1, queued on both | ${pct(t['queued-on-both'].right, t['queued-on-both'].calls)} | ≥ 80% | ${met(t['queued-on-both'].calls, t['queued-on-both'].right >= 0.8 * t['queued-on-both'].calls)} |`,
+    `| M2, worst tenth's margin before the deadline | ${s(m2r.worstTenthMs)}; ${m2r.early} of ${m2r.signals} signals early | Worst tenth still early: > 0 s | ${met(m2r.signals, m2r.worstTenthMs > 0)} |`,
+    `| M3, told the outcome before the bus called | ${m3r.before} / ${told} = ${pct(m3r.before, told)} | ≥ 99% | ${met(told, m3r.before >= 0.99 * told)} |`,
     '| M3, median from decision to presentation | Not measured by replay | ≤ 1 s | — |',
-    `| M4a, signals per approach | 1 on ${perApproach.filter((k) => k === 1).length} of ${perApproach.length} approaches | Exactly 1 | ${yes(perApproach.every((k) => k === 1))} |`,
-    `| M4b, approaches with a correction | ${corrected} / ${approaches} = ${pct(corrected, approaches)} | ≤ 10% | ${yes(corrected <= 0.1 * approaches)} |`,
-    `| M4c, approaches reaching their deadline in Unattended | ${unattended} / ${approaches} = ${pct(unattended, approaches)} | ≤ 5% | ${yes(unattended <= 0.05 * approaches)} |`,
+    `| M4a, signals per approach | 1 on ${perApproach.filter((k) => k === 1).length} of ${perApproach.length} approaches | Exactly 1 | ${met(perApproach.length, perApproach.every((k) => k === 1))} |`,
+    `| M4b, approaches with a correction | ${corrected} / ${approaches} = ${pct(corrected, approaches)} | ≤ 10% | ${met(approaches, corrected <= 0.1 * approaches)} |`,
+    `| M4c, approaches reaching their deadline in Unattended | ${unattended} / ${approaches} = ${pct(unattended, approaches)} | ≤ 5% | ${met(approaches, unattended <= 0.05 * approaches)} |`,
     '',
-    `Apart from M3: ${m3r.stopped} hails committed on a stopped vehicle were spent before their bus passed, so were told no outcome (ADR-032 and ADR-038, annotated 09-10-2026). M2 leaves out the ${m2r.noDeadline} commits on a stopped vehicle, which have no deadline (ADR-037).`,
+    `Apart from M3: ${m3r.stopped} hails committed on a stopped vehicle were spent before their run stopped calling, so were told no outcome (ADR-032 and ADR-038, annotated 09-10-2026). M2 leaves out the ${m2r.noDeadline} commits on a stopped vehicle, which have no deadline (ADR-037).`,
     `M3's ${told - m3r.before} not told before the bus called: ${m3r.committedUntold} committed with a deadline and spent before it, told nothing; ${m3r.uncommitted} never committed or abandoned; ${m3r.after} told after the call.`,
     `M3's latency: each outcome is recorded in the transition that decides it, so the replay has no delay to measure; the time to presentation is the passenger app's. No replayed scenario sends a console acknowledgement, so every committed hail's outcome is unacknowledged or none.`,
-    `M4c: ${n5.logs.flat().filter((l) => l.includes('"kind":"unattended"')).length} \`unattended\` records in the N = 5 logs.`,
+    `M4c: ${n5.logs.flatMap(records).filter((r) => r.kind === 'unattended').length} \`unattended\` records in the N = 5 logs.`,
   ];
 }
 

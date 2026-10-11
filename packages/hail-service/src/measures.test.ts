@@ -19,19 +19,34 @@ const scenario = (cls: 'single' | 'queued', calls: Scenario['calls'], n = 1): Sc
   ({ stopId: 'S', day: '20261003', dS: 17.4, n, class: cls, group: `${cls}-on-both`, calls, events: [] });
 
 describe('report', () => {
-  it("gives M1 per D as ADR-034's table, and each group against its target (ADR-034, ADR-037 decision 2)", () => {
-    const n1 = {
-      built: [scenario('single', [call('R', 'V1', 'single')]), scenario('queued', [call('Q', 'V2', 'queued')])],
-      logs: [[registered('h1', 'R'), committed(T + 60_000, 'h1', 'V1', T + 90_000)], [registered('h1', 'Q'), committed(T + 60_000, 'h1', 'V9', T + 90_000)]],
-    };
+  const run = {
+    built: [scenario('single', [call('R', 'V1', 'single')]), scenario('queued', [call('Q', 'V2', 'queued')])],
+    logs: [
+      // Right, told before V1 calls at T + 300 s.
+      [registered('h1', 'R'), committed(T + 60_000, 'h1', 'V1', T + 90_000), line(T + 90_000, 'unacknowledged', 'h1', 'V1')],
+      // Wrong, told nothing, and Unattended at its deadline.
+      [registered('h1', 'Q'), committed(T + 60_000, 'h1', 'V9', T + 90_000), line(T + 70_000, 'unattended', 'h1')],
+    ],
+  };
 
-    const lines = report(n1, n1);
+  it("gives M1 per D as ADR-034's table, and each group against its target (ADR-034, ADR-037 decision 2)", () => {
+    const lines = report(run, run);
 
     expect(lines).toContain('| Single on both | 1 | 1 / 1 = 100.0% |');
     expect(lines).toContain('| Queued on both | 1 | 0 / 1 = 0.0% |');
     expect(lines).toContain('| Disputed (class differs with AT\'s arrival times) | 0 | 0 / 0 = — |');
     expect(lines).toContain('| M1, single on both | 100.0% | ≥ 95% | yes |');
     expect(lines).toContain('| M1, queued on both | 0.0% | ≥ 80% | no |');
+  });
+
+  it('gives M2 to M4c each against its m1-revised.md §7.3 target, M4a to M4c over the N = 5 approaches', () => {
+    const lines = report(run, run);
+
+    expect(lines).toContain("| M2, worst tenth's margin before the deadline | 30.000 s; 2 of 2 signals early | Worst tenth still early: > 0 s | yes |");
+    expect(lines).toContain('| M3, told the outcome before the bus called | 1 / 2 = 50.0% | ≥ 99% | no |');
+    expect(lines).toContain('| M4a, signals per approach | 1 on 2 of 2 approaches | Exactly 1 | yes |');
+    expect(lines).toContain('| M4b, approaches with a correction | 0 / 2 = 0.0% | ≤ 10% | yes |');
+    expect(lines).toContain('| M4c, approaches reaching their deadline in Unattended | 1 / 2 = 50.0% | ≤ 5% | no |');
   });
 });
 
