@@ -27,12 +27,15 @@ POST=$(block "Check the verdict and post it"); MERGE=$(block "Merge what the rev
 # "owner/repo number" per line). $FAIL_CLOSE makes closing that issue number
 # fail, $FAIL_LOOKUP makes the issue lookup fail, $FAIL_CHECKS makes the wait
 # for the base branch's required checks fail, and $FAIL_DISPATCH makes starting
-# CI fail.
+# CI fail. $XCTEST_RUN is the id of ios.yml's run on the head commit (empty for
+# none), and $FAIL_XCTEST makes that run fail.
 gh() { case $1 in
     pr) if [ "$2" = checks ]; then [ -z "${FAIL_CHECKS:-}" ]; return; fi
         [ -n "${FAIL_LOOKUP:-}" ] && return 1; printf '%s' "${REFS:-}"; return;;
     issue) [ "${FAIL_CLOSE:-}" = "$3" ] && return 1; echo "close $5#$3" >> "$OUT/log"; return;;
     workflow) echo "$*" >> "$OUT/log"; [ -z "${FAIL_DISPATCH:-}" ]; return;;
+    run) if [ "$2" = list ]; then echo "run list" >> "$OUT/log"; printf '%s' "${XCTEST_RUN:-}"; return; fi
+         echo "run watch $3" >> "$OUT/log"; [ -z "${FAIL_XCTEST:-}" ]; return;;
   esac
   local q= path= input= args="$*"; while [ $# -gt 0 ]; do case $1 in --jq) q=$2; shift 2;; --input) input=$2; shift 2;; -X|-f|--repo) shift 2;; api|--paginate|--silent) shift;; *) path=$1; shift;; esac; done
   case $path in
@@ -120,4 +123,16 @@ export FAIL_DISPATCH=1
 merge true src/x.ts
 check "merge: CI that will not start fails the job, after the merge" '[ "$(tr "\n" " " < $OUT/log)" = "merge pinned workflow run ci.yml -R o/r --ref master " ] && [ "$(cat $OUT/rc)" != 0 ]'
 unset FAIL_DISPATCH
+export XCTEST_RUN=9 FAIL_XCTEST=1
+merge true $'src/x.ts\nios/StopSignal/HailViewModel.swift'
+check "merge: a pull request touching ios/ whose xctest failed is not merged" '[ "$(tr "\n" " " < $OUT/log)" = "run list run watch 9 " ] && [ "$(cat $OUT/rc)" = 0 ]'
+merge true src/x.ts
+check "merge: a pull request not touching ios/ merges without waiting on xctest" '[ "$(tr "\n" " " < $OUT/log)" = "merge pinned workflow run ci.yml -R o/r --ref master " ]'
+unset FAIL_XCTEST
+merge true ios/StopSignal/HailViewModel.swift
+check "merge: a pull request touching ios/ whose xctest passed merges" '[ "$(tr "\n" " " < $OUT/log)" = "run list run watch 9 merge pinned workflow run ci.yml -R o/r --ref master " ]'
+export XCTEST_RUN=
+merge true ios/StopSignal/HailViewModel.swift
+check "merge: a pull request touching ios/ with no xctest run on its head is not merged" '[ "$(tr "\n" " " < $OUT/log)" = "run list " ] && [ "$(cat $OUT/rc)" = 0 ]'
+unset XCTEST_RUN
 exit $fail
