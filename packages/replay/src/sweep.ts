@@ -11,10 +11,9 @@ import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { ServiceDay } from '../../hail-core/src/coordinator.ts';
 import { stoppingBudget, T_PR } from '../../hail-core/src/deadline.ts';
-import type { VehicleReport } from '../../hail-core/src/resolve.ts';
 import { m2 } from '../../hail-service/src/measures.ts';
 import { replayRuns } from '../../hail-service/src/replay-runs.ts';
-import { fixtures, inputs, replay, type Timed } from './replay.ts';
+import { fixtures, inputs, replay, type Snapshot, type Timed } from './replay.ts';
 
 // Both ends of the band, and every tenth between.
 const DECELS = [0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.47];
@@ -24,7 +23,7 @@ const DECELS = [0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.47];
 // where d = v · (t_pr + margin) + v² / 2a, solved here for v.
 // ponytail: a hail that joins a live signal adds no speed, since the signal then carries the earliest deadline and the
 // latest distance. The script warns when that leaves any signal's D out; no N = 1 fixture scenario does.
-export function sweep(index: ServiceDay, snaps: readonly { at: number; reports: VehicleReport[] }[], scenarios: readonly (readonly Timed[])[], decels = DECELS) {
+export function sweep(index: ServiceDay, snaps: readonly Snapshot[], scenarios: readonly (readonly Timed[])[], decels = DECELS) {
   return decels.map((a) => {
     const d: number[] = [];
     const logs = scenarios.map((events) => {
