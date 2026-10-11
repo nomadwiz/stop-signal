@@ -10,12 +10,13 @@ import XCTest
 final class StopsRegisterTests: XCTestCase {
     let melrose = Stop.bundled.first { $0.id == "7177-4660a5ff" }!
 
-    override func setUp() {
+    override func setUpWithError() throws {
         StubProtocol.requests = []
         // SwiftUI builds its accessibility tree only while an assistive technology is on. This private switch in
         // libAccessibility, called from the tests alone, turns it on as VoiceOver would; the app never calls it.
         let library = dlopen("/usr/lib/libAccessibility.dylib", RTLD_NOW)
-        unsafeBitCast(dlsym(library, "_AXSApplicationAccessibilitySetEnabled")!, to: (@convention(c) (Bool) -> Void).self)(true)
+        let enable = try XCTUnwrap(dlsym(library, "_AXSApplicationAccessibilitySetEnabled"), "libAccessibility no longer has _AXSApplicationAccessibilitySetEnabled")
+        unsafeBitCast(enable, to: (@convention(c) (Bool) -> Void).self)(true)
     }
 
     // `view` in a phone-sized window, kept by the test so its state lives across reads.

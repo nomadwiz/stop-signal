@@ -35,7 +35,7 @@ struct Stop: Decodable, Hashable, Identifiable {
         let query = query.trimmingCharacters(in: .whitespaces)
         let matched = query.isEmpty ? bundled : bundled.filter { $0.name.localizedStandardContains(query) || $0.code.contains(query) }
         guard let here else { return matched.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending } }
-        return matched.sorted { here.distance(from: $0.location) < here.distance(from: $1.location) }
+        return matched.map { ($0, here.distance(from: $0.location)) }.sorted { $0.1 < $1.1 }.map(\.0)
     }
 
     // "40 m" under a kilometre, "1.2 km" from there, as StopRow and OutcomeCard write distances.

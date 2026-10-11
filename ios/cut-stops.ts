@@ -27,10 +27,8 @@ for (const st of await rows('stop_times.txt')) {
   calls.get(st.trip_id)!.push(st);
 }
 // A trip picks up at every call but its last, and at none whose pickup_type is 1 (no pickup).
-const pickups = (tripCalls: Record<string, string>[]) => {
-  const ordered = tripCalls.toSorted((a, b) => +a.stop_sequence - +b.stop_sequence).slice(0, -1);
-  return ordered.filter((st) => st.pickup_type !== '1');
-};
+const pickups = (tripCalls: Record<string, string>[]) =>
+  tripCalls.toSorted((a, b) => +a.stop_sequence - +b.stop_sequence).slice(0, -1).filter((st) => st.pickup_type !== '1');
 
 const routeIds = new Set([...calls].filter(([, c]) => pickups(c).some((st) => st.stop_id === through)).map(([id]) => trips.get(id)!.route_id));
 // Per stop, per route, how many departures carry each headsign.

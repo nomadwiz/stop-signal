@@ -53,7 +53,7 @@ struct StopRow: View {
     var body: some View {
         HStack(spacing: Tokens.space("space-3")) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(stop.name).tokenFont("headline").foregroundStyle(Tokens.color("ink"))
+                headline(stop.name)
                 Text("Stop \(stop.code)" + (distance.map { " · \($0)" } ?? "")).tokenFont("footnote").foregroundStyle(Tokens.color("ink-muted"))
                 Flow(spacing: Tokens.space("space-1")) {
                     ForEach(stop.routes) { RouteChip(route: $0.shortName) }
@@ -78,7 +78,7 @@ struct RouteRow: View {
     var body: some View {
         HStack(spacing: Tokens.space("space-3")) {
             RouteChip(route: route.shortName)
-            Text(route.destination).tokenFont("headline").foregroundStyle(Tokens.color("ink")).wraps()
+            headline(route.destination).wraps()
             Chevron()
         }
         .row()
@@ -92,6 +92,11 @@ private struct Chevron: View {
     var body: some View {
         Image(systemName: "chevron.right").foregroundStyle(Tokens.color("ink-muted"))
     }
+}
+
+// A stop name, destination or button label: `headline` in `ink`.
+@MainActor private func headline(_ text: String) -> some View {
+    Text(text).tokenFont("headline").foregroundStyle(Tokens.color("ink"))
 }
 
 private extension View {
@@ -137,7 +142,7 @@ struct ConfirmPanel: View {
             row {
                 VStack(alignment: .leading) {
                     label("Stop")
-                    Text(stop.name).tokenFont("headline").foregroundStyle(Tokens.color("ink"))
+                    headline(stop.name)
                     label("Stop \(stop.code)")
                 }
                 .wraps()
@@ -155,7 +160,7 @@ struct ConfirmPanel: View {
     private var destination: some View {
         VStack(alignment: .leading) {
             label("Route")
-            Text(route.destination).tokenFont("headline").foregroundStyle(Tokens.color("ink"))
+            headline(route.destination)
         }
     }
 

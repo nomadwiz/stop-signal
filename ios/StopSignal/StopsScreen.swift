@@ -35,15 +35,16 @@ struct StopsScreen: View {
             .navigationTitle("Pick your stop")
             .searchable(text: $query, prompt: "Search stops")
             .navigationDestination(for: Stop.self) { RegisterScreen(stop: $0, model: model) }
-        }
-        .task {
-            // Without permission the list stays in name order, and search still finds every stop.
-            locator.requestWhenInUseAuthorization()
-            do {
-                for try await update in CLLocationUpdate.liveUpdates() where update.location != nil {
-                    here = update.location
-                }
-            } catch {}
+            .task {
+                // On the list, not the stack, so location updates stop while Register is open. Without permission the
+                // list stays in name order, and search still finds every stop.
+                locator.requestWhenInUseAuthorization()
+                do {
+                    for try await update in CLLocationUpdate.liveUpdates() where update.location != nil {
+                        here = update.location
+                    }
+                } catch {}
+            }
         }
     }
 }

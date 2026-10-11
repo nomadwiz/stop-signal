@@ -9,6 +9,7 @@ struct RegisterScreen: View {
     let model: HailViewModel
     @State private var route: Stop.Route?
     @State private var failed = false
+    @State private var arming = false
     @Environment(\.dismiss) private var dismiss
 
     init(stop: Stop, model: HailViewModel) {
@@ -24,6 +25,7 @@ struct RegisterScreen: View {
                     ConfirmPanel(route: route, stop: stop, onEditRoute: { self.route = nil }, onEditStop: { dismiss() })
                     Spacer(minLength: Tokens.space("space-8"))
                     MainAction(label: "Arm hail for the \(route.shortName)") { arm(route) }
+                        .disabled(arming)
                 }
                 .padding(Tokens.space("space-4"))
                 .onAppear {
@@ -52,8 +54,12 @@ struct RegisterScreen: View {
         }
     }
 
+    // One registration per tap: a second tap while the first is in flight does nothing.
     private func arm(_ route: Stop.Route) {
+        guard !arming else { return }
+        arming = true
         Task {
+            defer { arming = false }
             do { try await model.register(stop: stop.id, route: route.id, duration: 0) } catch { failed = true }
         }
     }
