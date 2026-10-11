@@ -26,8 +26,11 @@ const DWELL_MS = 30_000;
 // and a scenario's events are already in this shape (ADR-035 decision 5).
 export interface Timed { at: number; event: HailEvent }
 
+// A decoded snapshot: its capture time and its vehicle reports, one tick.
+export interface Snapshot { at: number; reports: VehicleReport[] }
+
 // The snapshots as ticks, merged with the events in time order. The sort is stable, so on a tie the tick goes first.
-export function inputs(snaps: readonly { at: number; reports: VehicleReport[] }[], events: readonly Timed[]): Timed[] {
+export function inputs(snaps: readonly Snapshot[], events: readonly Timed[]): Timed[] {
   const ticks = snaps.map(({ at, reports }): Timed => ({ at, event: { kind: 'tick', reports } }));
   return [...ticks, ...events].sort((a, b) => a.at - b.at);
 }
@@ -37,8 +40,8 @@ export function inputs(snaps: readonly { at: number; reports: VehicleReport[] }[
 // replay never runs a commit late by the gap to the next snapshot. The replay ends at its last input, so a wakeup due
 // after it never fires. Outcomes go nowhere, and signals too unless a caller passes a SignalPort: the log is what T7 compares.
 // Each line is JSON.stringify of the record, as main.ts writes it, keys in ADR-017's order. The sweep (#67) replays at
-// other decelerations and reads the signals.
-export function replay(timetable: ServiceDay, timed: readonly Timed[], decelMps2 = DECEL_MPS2, signals: SignalPort = { signal: () => {}, retract: () => {} }): string[] {
+// other decelerations and reads the signals; the resource run (#69) passes a generator, to time each input as it is pulled.
+export function replay(timetable: ServiceDay, timed: Iterable<Timed>, decelMps2 = DECEL_MPS2, signals: SignalPort = { signal: () => {}, retract: () => {} }): string[] {
   let now = -Infinity;
   const clock = { now: () => now };
   const log: string[] = [];
@@ -69,7 +72,7 @@ export const here = (path: string) => fileURLToPath(new URL(`../${path}`, import
 
 // The fixture window (ADR-030): its service day, and each snapshot decoded once, as C7 would hand it to the loop: the
 // whole decoded snapshot is one tick.
-export async function fixtures(): Promise<{ index: ServiceDay; snaps: { at: number; reports: VehicleReport[] }[] }> {
+export async function fixtures(): Promise<{ index: ServiceDay; snaps: Snapshot[] }> {
   const manifest = JSON.parse(readFileSync(here('fixtures/manifest.json'), 'utf8'));
   const index = await loadServiceDay(here('fixtures/gtfs.zip'), manifest.day);
   const snaps = [];
