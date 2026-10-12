@@ -6,9 +6,20 @@ import XCTest
 
 // Answers every request in place of the network and keeps what it was sent: 200 with `reply` for the
 // outcome stream, 204 with no body for the other routes, as packages/hail-service/src/server.ts answers.
-final class StubProtocol: URLProtocol {
-    nonisolated(unsafe) static var requests: [(method: String, url: URL, body: NSDictionary, timeout: TimeInterval)] = []
+final class StubProtocol: URLProtocol, @unchecked Sendable {
+    typealias Request = (method: String, url: URL, body: NSDictionary, timeout: TimeInterval)
+    // URLSession loads requests on its own threads, several at once while a hail is armed (#58), so the log is locked.
+    private nonisolated(unsafe) static var log: [Request] = []
+    private static let lock = NSLock()
+    static var requests: [Request] {
+        get { lock.withLock { log } }
+        set { lock.withLock { log = newValue } }
+    }
     nonisolated(unsafe) static var reply = Data()
+    // Set, every route but the stream answers 500.
+    nonisolated(unsafe) static var failing = false
+    // Seconds a request to each path takes before the service sees it.
+    nonisolated(unsafe) static var delays: [String: TimeInterval] = [:]
 
     static var session: URLSession {
         let configuration = URLSessionConfiguration.ephemeral
@@ -30,9 +41,17 @@ final class StubProtocol: URLProtocol {
             bytes.append(buffer, count: count)
         }
         stream.close()
-        Self.requests.append((request.httpMethod!, request.url!, try! JSONSerialization.jsonObject(with: bytes) as! NSDictionary, request.timeoutInterval))
+        // A delayed request is answered from a timer on this loading thread's run loop, which every request shares, so
+        // sleeping here would hold every other request back too.
+        guard let delay = Self.delays[request.url!.path] else { return answer(bytes) }
+        RunLoop.current.add(Timer(timeInterval: delay, repeats: false) { [bytes] _ in self.answer(bytes) }, forMode: .common)
+    }
+
+    private func answer(_ bytes: Data) {
+        let body = try! JSONSerialization.jsonObject(with: bytes) as! NSDictionary
+        Self.lock.withLock { Self.log.append((request.httpMethod!, request.url!, body, request.timeoutInterval)) }
         let streaming = request.url!.path == "/outcomes"
-        let response = HTTPURLResponse(url: request.url!, statusCode: streaming ? 200 : 204, httpVersion: nil, headerFields: nil)!
+        let response = HTTPURLResponse(url: request.url!, statusCode: streaming ? 200 : Self.failing ? 500 : 204, httpVersion: nil, headerFields: nil)!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         if streaming { client?.urlProtocol(self, didLoad: Self.reply) }
         client?.urlProtocolDidFinishLoading(self)
@@ -47,6 +66,8 @@ final class StopSignalTests: XCTestCase {
     override func setUp() {
         StubProtocol.requests = []
         StubProtocol.reply = Data()
+        StubProtocol.failing = false
+        StubProtocol.delays = [:]
     }
 
     // m1-revised.md §6.1: iOS 17.0 or later, iPhone, portrait only.
@@ -59,19 +80,21 @@ final class StopSignalTests: XCTestCase {
 
     // ADR-012 decision 2: the view model holds the hail's state and its register and cancel intents, with no UI.
     func testTheViewModelRegistersAndCancelsAHail() async throws {
-        let model = HailViewModel(api: HailApi(base: base, handle: handle, session: StubProtocol.session))
+        let model = HailViewModel(api: HailApi(base: base, handle: handle, session: StubProtocol.session), fixes: FakeFixes(), wait: .zero)
+        let stop = Stop.bundled[0]
 
-        try await model.register(stop: "7012", route: "70-203", duration: 0)
-        XCTAssertEqual(model.registration, HailViewModel.Registration(stop: "7012", route: "70-203"))
+        try await model.register(stop: stop, route: "70-203", duration: 0)
+        XCTAssertEqual(model.registration, HailViewModel.Registration(stop: stop.id, route: "70-203"))
 
         try await model.cancel()
         XCTAssertNil(model.registration)
-        XCTAssertEqual(StubProtocol.requests.map(\.url.path), ["/register", "/cancel"])
+        // Arming also opens the outcome stream (#58), which may or may not have started by the cancel.
+        XCTAssertEqual(StubProtocol.requests.map(\.url.path).filter { $0 != "/outcomes" }, ["/register", "/cancel"])
     }
 
     // ADR-032 decisions 1 and 2, QR8: five routes, each body exactly its wire names and nothing else.
     func testHailApiCallsTheFiveRoutesAndSendsOnlyQR8sFields() async throws {
-        StubProtocol.reply = Data("event: outcome\ndata: {\"stop\":\"7012\",\"route\":\"70-203\",\"outcome\":\"cannot-hail\",\"reason\":\"deadline\",\"nextDistanceM\":1200}\n\n".utf8)
+        StubProtocol.reply = Data("event: status\ndata: {\"stop\":\"7012\",\"route\":\"70-203\",\"status\":\"sent\"}\n\nevent: outcome\ndata: {\"stop\":\"7012\",\"route\":\"70-203\",\"outcome\":\"cannot-hail\",\"reason\":\"deadline\",\"nextDistanceM\":1200}\n\n".utf8)
         let api = HailApi(base: base, handle: handle, session: StubProtocol.session)
 
         try await api.register(stop: "7012", route: "70-203", duration: 120)
@@ -97,7 +120,10 @@ final class StopSignalTests: XCTestCase {
         ])
         // The outcome stream is silent between outcomes, so URLSession's 60 s idle default would close it (ADR-010 decision 3).
         XCTAssertEqual(StubProtocol.requests[4].timeout, TimeInterval(Int32.max))
-        XCTAssertEqual(outcomes, [Outcome(stop: "7012", route: "70-203", outcome: "cannot-hail", reason: "deadline", nextDistanceM: 1200)])
+        XCTAssertEqual(outcomes, [
+            Outcome(stop: "7012", route: "70-203", status: "sent"),
+            Outcome(stop: "7012", route: "70-203", outcome: "cannot-hail", reason: "deadline", nextDistanceM: 1200),
+        ])
     }
 
     // ADR-032 decision 5: a UUID v4 made once per install, kept on the device, never in a URL.

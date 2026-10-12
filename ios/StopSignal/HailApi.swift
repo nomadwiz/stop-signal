@@ -25,8 +25,9 @@ struct HailApi {
         try await post("presence/end", ["handle": handle, "stop": stop])
     }
 
-    // Holds the outcome stream open and hands each outcome to `receive` until the stream ends. The server sends
-    // each as `event: outcome` with one `data:` line; closing the last stream is the passenger's connection lost.
+    // Holds the outcome stream open and hands each event to `receive` until the stream ends. The server sends each
+    // as `event: outcome` or `event: status` with one `data:` line; closing the last stream is the passenger's
+    // connection lost.
     // The stream is silent until an outcome, so it takes no practical idle timeout: URLSession's default 60 s would
     // close it on any longer wait, and the service would mark that passenger Unattended (ADR-010 decision 3).
     func outcomes(_ receive: (Outcome) -> Void) async throws {
@@ -59,14 +60,16 @@ struct HailApi {
     }
 }
 
-// ADR-032 decision 3 and its annotation of 09-10-2026: `reason` comes with cannot-hail only, and `nextDistanceM`
-// with a `deadline` abandonment only, null when the feed shows no next bus.
+// One event on the outcome stream. An outcome event carries `outcome` (ADR-032 decision 3): `reason` comes with
+// cannot-hail only, and `nextDistanceM` with a `deadline` abandonment only, null when the feed shows no next bus
+// (annotated 09-10-2026). A status event carries `status` instead: waiting, sent, moved or stale (annotated 11-10-2026).
 struct Outcome: Decodable, Equatable {
     let stop: String
     let route: String
-    let outcome: String
+    var outcome: String?
     var reason: String?
     var nextDistanceM: Double?
+    var status: String?
 }
 
 // ADR-032 decision 5: a UUID v4 the device makes once per install, and whose possession authorises. It is kept in the
