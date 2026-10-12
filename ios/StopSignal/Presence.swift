@@ -10,7 +10,8 @@ struct Fix: Sendable {
 
     // ADR-045: a phone arrives within 50 m of the stop and leaves beyond 100 m, so a fix between the two changes
     // nothing. A fix of unknown accuracy or one worse than 50 m changes nothing, nor does one taken while stationary,
-    // unless it is the session's first accurate fix (`first`), which arming waits for (decision 5).
+    // unless the session has had no decisive fix yet (`first`), which arming waits for (decision 5; the owner's
+    // decision 28 of 12-10-2026).
     // A new session starts unknown (nil), so its first fix outside the gap reports either way: the service holds a
     // passenger's presence at a stop until a presence-end (ADR-040, annotated 07-10-2026), and a session closed on
     // cancel or cannot-hail while present sends none.

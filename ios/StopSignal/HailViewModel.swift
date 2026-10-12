@@ -24,8 +24,8 @@ final class HailViewModel {
     private let fixes: Fixes
     private let wait: Duration
 
-    // ponytail: an assumption, not a measured time. How long arming waits for a first fix accurate to 50 m before
-    // Register goes ahead without one (the owner's decision of 12-10-2026). Measure a cold fix on a device to set it.
+    // ponytail: an assumption, not a measured time. How long arming waits for a first decisive fix before Register
+    // goes ahead without one (the owner's decision of 12-10-2026). Measure a cold fix on a device to set it.
     static let firstFixWait = Duration.seconds(5)
 
     init(api: HailApi, fixes: Fixes, wait: Duration = firstFixWait) {
@@ -36,7 +36,7 @@ final class HailViewModel {
 
     // The session opens before the registration's round trip, while the passenger is still tapping Arm, because only
     // a session made in the foreground becomes active (CLBackgroundActivitySession.h; ADR-009, annotated 02-10-2026).
-    // Its first accurate fix is reported before Register, so a hail never commits on an arrival the service holds from
+    // Its first decisive fix is reported before Register, so a hail never commits on an arrival the service holds from
     // an earlier session (ADR-045 decision 5). Arming replaces any session before it.
     func register(stop: Stop, route: String, duration: Int) async throws {
         close()
@@ -77,14 +77,14 @@ final class HailViewModel {
 
     // A closed session's task is cancelled, but its stream still hands over fixes already buffered, and the view
     // model's state belongs to the newest session, so each step checks for cancellation first. `reported` finishes
-    // once the first accurate fix is reported, which lets arming send Register.
+    // once the first decisive fix is reported, which lets arming send Register; a first fix between 50 and 100 m is not
+    // decisive, so the wait goes on (the owner's decision 28 of 12-10-2026).
     // ponytail: a failed transition is not retried, and the stream is not reopened; #55 shows unreachable and re-arms.
     private func sense(_ stop: Stop, _ fixes: AsyncStream<Fix>, _ reported: AsyncStream<Void>.Continuation) async {
         defer { reported.finish() }
-        var first = true
         for await fix in fixes where !Task.isCancelled {
-            defer { if fix.accurate { first = false; reported.finish() } }
-            guard let now = fix.present(at: stop.location, was: present, first: first), now != present else { continue }
+            defer { if present != nil { reported.finish() } }
+            guard let now = fix.present(at: stop.location, was: present, first: present == nil), now != present else { continue }
             present = now
             if now {
                 try? await api.presenceStart(stop: stop.id)

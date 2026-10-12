@@ -93,6 +93,18 @@ final class PresenceTests: XCTestCase {
         XCTAssertEqual(StubProtocol.requests.map(\.url.path).filter { $0 != "/outcomes" }, ["/presence/end", "/register"])
     }
 
+    // The owner's decision 28 of 12-10-2026: a first fix between 50 and 100 m is not decisive, so arming waits on for a
+    // decisive fix, or for the wait to end, before Register.
+    func testAFirstFixBetween50And100mHoldsRegisterUntilADecisiveFix() async throws {
+        fixes.send(75, from: melrose)
+        let arming = Task { try await model.register(stop: melrose, route: "70-205", duration: 0) }
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(StubProtocol.requests.map(\.url.path), [])
+        fixes.send(200, from: melrose)
+        try await arming.value
+        XCTAssertEqual(StubProtocol.requests.map(\.url.path).filter { $0 != "/outcomes" }, ["/presence/end", "/register"])
+    }
+
     // #58 acceptance 2: no coordinate leaves the device. Every request through an armed session carries only QR8's
     // handle, stop, route and duration, in its body, and none has a query.
     func testNoCoordinateLeavesTheDevice() async throws {
