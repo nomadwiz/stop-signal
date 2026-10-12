@@ -143,6 +143,10 @@ jobs:
           prompt: |
             Review pull request #${{ github.event.pull_request.number }} of ${{ github.repository }}, the StopSignal build. The working directory is that repository. The documents repository, nomadwiz/stop-signal-doc, is checked out at `stop-signal-doc/` on its `master` branch with full history.
 
+            ## How to run commands
+
+            Read files with the Read, Grep and Glob tools, never with `cat`, `ls`, `grep` or `head` in Bash. Bash runs only `gh pr diff`, `gh pr view`, `gh api`, `git log`, `git diff`, `git show` and `jq`, one command per call: no `cd`, `;`, `&&`, `|`, redirection or shell variables. Reach the documents with `git -C stop-signal-doc …` or with a path under `stop-signal-doc/`. A refused call costs a turn and returns nothing, so do not retry one in another shape. Write `verdict.json` as soon as you have a verdict, then refine it if you check more.
+
             ## Read the contract first
 
             Read `stop-signal-doc/CLAUDE.md`, then `stop-signal-doc/README.md` and `stop-signal-doc/doc/design/ownership.md`. This repository has no `CLAUDE.md` of its own: its `README.md` says the build treats `doc/design/` as its source of truth.
