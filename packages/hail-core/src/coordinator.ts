@@ -208,11 +208,15 @@ export function hailCoordinator({ clock, record, signals, notify, schedule, time
       // the vehicle's next report until the deadline extrapolated from it (ADR-023, ADR-037 decision 1). Still stale
       // then, or already past it, the hail is abandoned (ADR-023, decided 07-10-2026). A deadline wakeup set for the
       // run the hail last resolved to ends it only on that run: a new pick, as when the 90 s cutoff passes the old one
-      // over, waits for its own deadline (ADR-039, annotated 08-10-2026).
+      // over, waits for its own deadline (ADR-039, annotated 08-10-2026). A standing pick has no deadline (ADR-023
+      // decision 3), so the hail keeps the one from its last moving pick (#165, the owner's decision 29, 13-10-2026),
+      // and waits while that pick calls: a deadline wakeup abandons only a moving pick (the owner's decision 37).
       if (p.stale) {
-        if ((purpose === 'deadline' && resolved) || (p.speedMps > 0 && !d)) return abandon(h, 'stale', vehicleId);
-        h.deadline = d?.deadline;
-        if (d) wake(h, 'deadline', d.deadline);
+        if (p.speedMps > 0 && ((purpose === 'deadline' && resolved) || !d)) return abandon(h, 'stale', vehicleId);
+        if (d) {
+          h.deadline = d.deadline;
+          wake(h, 'deadline', d.deadline);
+        }
         return show(h, 'stale');
       }
       // At speed 0 no deadline follows; a stopped vehicle within reach is due at once, and one beyond waits for its next
@@ -238,8 +242,9 @@ export function hailCoordinator({ clock, record, signals, notify, schedule, time
     }
     // No calling bus of its route is left to pick. A hail shown stale ends at its deadline wakeup or at any tick after
     // that deadline, naming the run it last resolved to: a stale candidate it waits on keeps it alive only while that
-    // candidate calls (ADR-039; the owner's decisions 21 and 25–27, 12-10-2026, #163).
-    if (h.status === 'stale' && now >= (h.deadline ?? Infinity)) abandon(h, 'stale', h.resolvedTo ? JSON.parse(h.resolvedTo)[0] : null);
+    // candidate calls (ADR-039; the owner's decisions 21 and 25–27, 12-10-2026, #163). One that never had a moving
+    // stale pick has no deadline, and ends at once (the owner's decision 36, 13-10-2026, #165).
+    if (h.status === 'stale' && now >= (h.deadline ?? -Infinity)) abandon(h, 'stale', h.resolvedTo ? JSON.parse(h.resolvedTo)[0] : null);
   };
   // C4, service-wide: a hail committed on a vehicle run at a stop joins that run's live signal there, or starts one (S4,
   // FR8). The signal takes the earliest of their deadlines, not the first or the last, and null, due at once, is
