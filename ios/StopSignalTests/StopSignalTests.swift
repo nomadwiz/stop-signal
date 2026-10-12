@@ -4,8 +4,10 @@ import SwiftUI
 import XCTest
 @testable import StopSignal
 
-// Answers every request in place of the network and keeps what it was sent: 200 with `reply` for the
-// outcome stream, 204 with no body for the other routes, as packages/hail-service/src/server.ts answers.
+// Answers every request in place of the network and keeps what it was sent: 200 for the outcome stream, 204 with no
+// body for the other routes, as packages/hail-service/src/server.ts answers. Each outcome stream sends the next of
+// `streams` and ends, as one the network drops does; once they run out, it sends `reply` and stays open, as the
+// service's does.
 final class StubProtocol: URLProtocol, @unchecked Sendable {
     typealias Request = (method: String, url: URL, body: NSDictionary, timeout: TimeInterval)
     // URLSession loads requests on its own threads, several at once while a hail is armed (#58), so the log is locked.
@@ -16,6 +18,11 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
         set { lock.withLock { log = newValue } }
     }
     nonisolated(unsafe) static var reply = Data()
+    private nonisolated(unsafe) static var queue: [Data] = []
+    static var streams: [Data] {
+        get { lock.withLock { queue } }
+        set { lock.withLock { queue = newValue } }
+    }
     // Set, every route but the stream answers 500.
     nonisolated(unsafe) static var failing = false
     // Seconds a request to each path takes before the service sees it.
@@ -51,10 +58,12 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
         let body = try! JSONSerialization.jsonObject(with: bytes) as! NSDictionary
         Self.lock.withLock { Self.log.append((request.httpMethod!, request.url!, body, request.timeoutInterval)) }
         let streaming = request.url!.path == "/outcomes"
-        let response = HTTPURLResponse(url: request.url!, statusCode: streaming ? 200 : Self.failing ? 500 : 204, httpVersion: nil, headerFields: nil)!
+        let response = HTTPURLResponse(url: request.url!, statusCode: streaming ? 200 : Self.failing ? 500 : 204, httpVersion: nil, headerFields: streaming ? ["content-type": "text/event-stream"] : nil)!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        if streaming { client?.urlProtocol(self, didLoad: Self.reply) }
-        client?.urlProtocolDidFinishLoading(self)
+        guard streaming else { return client!.urlProtocolDidFinishLoading(self) }
+        let next = Self.lock.withLock { Self.queue.isEmpty ? nil : Self.queue.removeFirst() }
+        client?.urlProtocol(self, didLoad: next ?? Self.reply)
+        if next != nil { client?.urlProtocolDidFinishLoading(self) }
     }
 }
 
@@ -66,6 +75,7 @@ final class StopSignalTests: XCTestCase {
     override func setUp() {
         StubProtocol.requests = []
         StubProtocol.reply = Data()
+        StubProtocol.streams = []
         StubProtocol.failing = false
         StubProtocol.delays = [:]
     }
@@ -84,7 +94,7 @@ final class StopSignalTests: XCTestCase {
         let stop = Stop.bundled[0]
 
         try await model.register(stop: stop, route: "70-203", duration: 0)
-        XCTAssertEqual(model.registration, HailViewModel.Registration(stop: stop.id, route: "70-203"))
+        XCTAssertEqual(model.registration, HailViewModel.Registration(stop: stop, route: "70-203"))
 
         try await model.cancel()
         XCTAssertNil(model.registration)
@@ -94,7 +104,7 @@ final class StopSignalTests: XCTestCase {
 
     // ADR-032 decisions 1 and 2, QR8: five routes, each body exactly its wire names and nothing else.
     func testHailApiCallsTheFiveRoutesAndSendsOnlyQR8sFields() async throws {
-        StubProtocol.reply = Data("event: status\ndata: {\"stop\":\"7012\",\"route\":\"70-203\",\"status\":\"sent\"}\n\nevent: outcome\ndata: {\"stop\":\"7012\",\"route\":\"70-203\",\"outcome\":\"cannot-hail\",\"reason\":\"deadline\",\"nextDistanceM\":1200}\n\n".utf8)
+        StubProtocol.streams = [Data("event: status\ndata: {\"stop\":\"7012\",\"route\":\"70-203\",\"status\":\"sent\"}\n\nevent: outcome\ndata: {\"stop\":\"7012\",\"route\":\"70-203\",\"outcome\":\"cannot-hail\",\"reason\":\"deadline\",\"nextDistanceM\":1200}\n\n".utf8)]
         let api = HailApi(base: base, handle: handle, session: StubProtocol.session)
 
         try await api.register(stop: "7012", route: "70-203", duration: 120)
@@ -102,7 +112,7 @@ final class StopSignalTests: XCTestCase {
         try await api.presenceStart(stop: "7012")
         try await api.presenceEnd(stop: "7012")
         var outcomes: [Outcome] = []
-        try await api.outcomes { outcomes.append($0) }
+        try await api.outcomes(opened: {}) { outcomes.append($0) }
 
         XCTAssertEqual(StubProtocol.requests.map { "\($0.method) \($0.url.absoluteString)" }, [
             "POST https://hail.test/register",

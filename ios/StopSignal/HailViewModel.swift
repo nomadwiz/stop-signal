@@ -7,7 +7,7 @@ import Observation
 @Observable
 final class HailViewModel {
     struct Registration: Equatable {
-        let stop: String
+        let stop: Stop
         let route: String
     }
 
@@ -18,21 +18,51 @@ final class HailViewModel {
     private(set) var delivered = false
     // The registered hail's latest outcome.
     private(set) var outcome: Outcome?
+    // The last status the stream sent. A status sent while the stream was closed is not replayed, so after a reopen
+    // this is the last one received (the owner's decision 5 of 13-10-2026).
+    private(set) var status = "waiting"
+    // The outcome stream is closed, or the latest request failed: StopSignal is unreachable (ADR-038, annotated
+    // 11-10-2026).
+    private var closed = false
+    private var failed = false
     private var sensing: Task<Void, Never>?
     private var listening: Task<Void, Never>?
     private let api: HailApi
     private let fixes: Fixes
     private let wait: Duration
+    private let reopen: Duration
 
     // ponytail: an assumption, not a measured time. How long arming waits for a first decisive fix before Register
     // goes ahead without one (the owner's decision of 12-10-2026). Measure a cold fix on a device to set it.
     static let firstFixWait = Duration.seconds(5)
 
-    init(api: HailApi, fixes: Fixes, wait: Duration = firstFixWait) {
+    // ponytail: a fixed wait between attempts to reopen a closed stream; back off if a device shows it costs battery.
+    static let reopenWait = Duration.seconds(5)
+
+    init(api: HailApi, fixes: Fixes, wait: Duration = firstFixWait, reopen: Duration = reopenWait) {
         self.api = api
         self.fixes = fixes
         self.wait = wait
+        self.reopen = reopen
     }
+
+    // What ArmedStatus shows (ADR-038). Unreachable outranks the rest, because nothing else holds while StopSignal
+    // cannot be reached. Away from the stop, left outranks the service's status: the passenger has to act. A first
+    // decisive fix beyond 100 m at arming is left with nothing delivered (the owner's decision 3 of 13-10-2026).
+    var armed: Armed {
+        if closed || failed { return .unreachable }
+        if present == false { return .left(delivered: delivered) }
+        return switch status {
+        case "sent": .sent
+        case "moved": .moved
+        case "stale": .stale
+        default: .waiting
+        }
+    }
+
+    // The hail shown is live: waiting, sent, moved, stale, or left with nothing delivered, and no outcome (ADR-038,
+    // annotated 11-10-2026 and 12-10-2026).
+    private var live: Bool { outcome == nil && !(present == false && delivered) }
 
     // The session opens before the registration's round trip, while the passenger is still tapping Arm, because only
     // a session made in the foreground becomes active (CLBackgroundActivitySession.h; ADR-009, annotated 02-10-2026).
@@ -40,7 +70,7 @@ final class HailViewModel {
     // an earlier session (ADR-045 decision 5). Arming replaces any session before it.
     func register(stop: Stop, route: String, duration: Int) async throws {
         close()
-        (present, delivered, outcome) = (nil, false, nil)
+        (present, delivered, outcome, status, closed, failed) = (nil, false, nil, "waiting", false, false)
         let opened = fixes.open()
         let (first, reported) = AsyncStream.makeStream(of: Void.self)
         sensing = Task { await sense(stop, opened, reported) }
@@ -59,13 +89,20 @@ final class HailViewModel {
             close()
             throw error
         }
-        registration = Registration(stop: stop.id, route: route)
-        listening = Task { await listen() }
+        let registration = Registration(stop: stop, route: route)
+        self.registration = registration
+        listening = Task { await listen(registration, duration) }
     }
 
+    // A failed cancel leaves the hail armed and shows unreachable, with Cancel hail still there.
     func cancel() async throws {
         guard let registration else { return }
-        try await api.cancel(stop: registration.stop, route: registration.route)
+        do {
+            try await api.cancel(stop: registration.stop.id, route: registration.route)
+        } catch {
+            failed = true
+            throw error
+        }
         close()
         self.registration = nil
     }
@@ -82,34 +119,66 @@ final class HailViewModel {
     // model's state belongs to the newest session, so each step checks for cancellation first. `reported` finishes
     // once the first decisive fix is reported, which lets arming send Register; a first fix between 50 and 100 m is not
     // decisive, so the wait goes on (ADR-045 decision 5, decided 12-10-2026).
-    // ponytail: a failed transition is not retried, and the stream is not reopened; #55 shows unreachable and re-arms.
+    // ponytail: a failed transition is not retried; it shows unreachable until a request succeeds or the stream reopens.
     private func sense(_ stop: Stop, _ fixes: AsyncStream<Fix>, _ reported: AsyncStream<Void>.Continuation) async {
         defer { reported.finish() }
         for await fix in fixes where !Task.isCancelled {
             defer { if present != nil { reported.finish() } }
             guard let now = fix.present(at: stop.location, was: present), now != present else { continue }
             present = now
-            if now {
-                try? await api.presenceStart(stop: stop.id)
-            } else {
-                try? await api.presenceEnd(stop: stop.id)
-                // Cancelling the session ends the loop at its next wait, and that ends the fixes' stream.
-                if delivered, !Task.isCancelled { close() }
-            }
+            await report(now, at: stop)
+            // Cancelling the session ends the loop at its next wait, and that ends the fixes' stream.
+            if !now, delivered, !Task.isCancelled { close() }
         }
     }
 
-    private func listen() async {
-        try? await api.outcomes { event in
-            guard !Task.isCancelled, event.stop == registration?.stop, event.route == registration?.route else { return }
-            if event.status == "sent" || event.status == "moved" || event.outcome == "confirmed" || event.outcome == "unacknowledged" {
-                delivered = true
-            }
-            if event.outcome != nil { outcome = event }
-            // ponytail: a hail delivered just before a departure reached the service was spent by it, but `sent` can
-            // arrive after this device left, and the session then stays open until cancel. Closing here instead could
-            // cancel that presence-end in flight.
-            if event.outcome == "cannot-hail" { close() }
+    // A request the session's own close cancelled is not a failure.
+    private func report(_ present: Bool, at stop: Stop) async {
+        do {
+            try await present ? api.presenceStart(stop: stop.id) : api.presenceEnd(stop: stop.id)
+            if !Task.isCancelled { failed = false }
+        } catch {
+            if !Task.isCancelled { failed = true }
         }
+    }
+
+    // Holds the outcome stream open, and reopens it whenever it closes. On a reopen, while the hail shown is live, the
+    // app reports its presence, if it has had a decisive fix, and then registers again (the owner's decision 4 of
+    // 13-10-2026), so a service that lost the hail, as a restart does, holds it and the passenger's presence again. A
+    // service that still holds them changes nothing for either (`case 'register'` in coordinator.ts).
+    private func listen(_ registration: Registration, _ duration: Int) async {
+        var reopening = false
+        while !Task.isCancelled {
+            try? await api.outcomes(opened: { [self] in
+                if reopening, live {
+                    if let present { await report(present, at: registration.stop) }
+                    do {
+                        try await api.register(stop: registration.stop.id, route: registration.route, duration: duration)
+                        if !Task.isCancelled { failed = false }
+                    } catch {
+                        if !Task.isCancelled { failed = true }
+                    }
+                }
+                if !Task.isCancelled { closed = false }
+            }) { [self] event in
+                if !Task.isCancelled { receive(event) }
+            }
+            guard !Task.isCancelled else { return }
+            (closed, reopening) = (true, true)
+            try? await Task.sleep(for: reopen)
+        }
+    }
+
+    func receive(_ event: Outcome) {
+        guard event.stop == registration?.stop.id, event.route == registration?.route else { return }
+        if event.status == "sent" || event.status == "moved" || event.outcome == "confirmed" || event.outcome == "unacknowledged" {
+            delivered = true
+        }
+        if let status = event.status { self.status = status }
+        if event.outcome != nil { outcome = event }
+        // ponytail: a hail delivered just before a departure reached the service was spent by it, but `sent` can
+        // arrive after this device left, and the session then stays open until cancel. Closing here instead could
+        // cancel that presence-end in flight.
+        if event.outcome == "cannot-hail" { close() }
     }
 }
