@@ -598,19 +598,106 @@ describe('hailCoordinator: the deadline and a stale prediction', () => {
     const deadline = s.scheduled.findLast(({ event }) => event.kind === 'wakeup' && event.purpose === 'deadline')!.at;
     expect(deadline).toBeCloseTo(T + 91_604.4, 0);
 
+    // C, V4 on route R, 800 m out at T + 100 s at 10 m/s, first reports at T + 95 s, so it calls from T + 100 s.
+    const c = (t: number) => report('V4', 'A1', 800 - (t - T - 100_000) / 100, t);
     s.at(deadline);
     // A snapshot re-serving B's old fix, still inside its stopping distance, is no next report: the hail waits on.
-    s.tick(T + 95_000, a(T + 1_000), b(T + 40_000));
+    s.tick(T + 95_000, a(T + 1_000), b(T + 40_000), c(T + 95_000));
     expect(s.kinds()).toEqual(['registered', 'present', 'eligible']);
 
-    // C, V4 on route R, 800 m out at T + 100 s at 10 m/s: once B is past the stop, the hail resolves to C, whose
-    // deadline is T + 172.4 s and commit instant T + 142.4 s.
-    const c = (t: number) => report('V4', 'A1', 800 - (t - T - 100_000) / 100, t);
+    // Once B is past the stop, the hail resolves to C, whose deadline is T + 172.4 s and commit instant T + 142.4 s. Had
+    // C not called by then, the hail would have ended at that tick (#163).
     for (const t of [T + 100_000, T + 110_000, T + 130_000]) s.tick(t, a(T + 1_000), b(T + 40_000), c(t));
     s.at(T + 142_444);
     expect(s.kinds()).toEqual(['registered', 'present', 'eligible']);
     s.at(T + 142_445);
     expect(s.records.at(-1)).toMatchObject({ kind: 'committed', vehicleId: 'V4' });
+  });
+});
+
+// #163 (FR11; the owner's decisions 21 and 25–27, 12-10-2026): an uncommitted hail shown stale with no calling bus of its
+// route ends as cannot hail, reason stale, at its deadline wakeup or at any tick after that deadline.
+describe('hailCoordinator: a stale hail with no calling bus (#163)', () => {
+  const told = { handle: HANDLE, stop: 'S', route: 'R', outcome: 'cannot-hail', reason: 'stale' };
+
+  it('abandons it at its deadline wakeup, naming the run it last resolved to, with no next bus', () => {
+    const s = service();
+    // Waiting on its deadline wakeup at T + 72.4 s; V1 then leaves the feed, which stays live.
+    states['eligible, stale'].reach(s);
+    s.tick(T + 60_000);
+
+    s.at(T + 72_445);
+
+    expect(s.records.at(-1)).toMatchObject({ at: T + 72_445, kind: 'abandoned', vehicleId: 'V1', payload: { reason: 'stale' } });
+    expect(s.outcomes).toStrictEqual([told]);
+  });
+
+  it('abandons it at the first tick after its deadline on which the stale candidate it waited on no longer calls', () => {
+    const s = service();
+    // As in the test above it: A, V1, is passed over from T + 91 s, its stale deadline T + 91.6 s, and B, V2, never
+    // resolved to, is held inside its stopping distance and past the stop from T + 98.3 s.
+    const a = (t: number) => v1(t, 981.6 - (t - T - 1_000) / 100);
+    const b = (t: number) => report('V2', 'A2', 874 - (15 * (t - T - 40_000)) / 1_000, t);
+    s.at(T - 60_000, register, start);
+    s.at(T - 30_000);
+    s.tick(T - 19_000, a(T - 19_000));
+    s.tick(T + 1_000, a(T + 1_000));
+    s.tick(T + 30_000, a(T + 1_000), b(T + 30_000));
+    for (const t of [T + 40_000, T + 60_000, T + 80_000]) s.tick(t, a(T + 1_000), b(T + 40_000));
+    s.at(T + 91_605);
+    s.tick(T + 95_000, a(T + 1_000), b(T + 40_000));
+    expect(s.kinds()).toEqual(['registered', 'present', 'eligible']);
+
+    s.tick(T + 100_000, a(T + 1_000), b(T + 40_000));
+
+    expect(s.records.at(-1)).toMatchObject({ at: T + 100_000, kind: 'abandoned', vehicleId: 'V1', payload: { reason: 'stale' } });
+    expect(s.outcomes).toStrictEqual([told]);
+  });
+
+  it('leaves it unchanged once its pick turns fresh before the deadline, though the pick then leaves the feed', () => {
+    const s = service();
+    states['eligible, stale'].reach(s);
+    // V1 reports fresh, slowed to 4 m/s 600 m out: its deadline moves to T + 195.8 s. It then leaves the feed.
+    s.tick(T + 50_000, v1(T + 50_000, 600));
+    s.tick(T + 60_000);
+
+    s.at(T + 72_445);
+    s.tick(T + 80_000);
+
+    expect(s.kinds()).toEqual(['registered', 'present', 'eligible']);
+    expect(s.outcomes).toEqual([]);
+  });
+
+  it('leaves it live while it has left, and ends it when it is eligible again after its deadline with no bus (ADR-023, amended 12-10-2026; ADR-040)', () => {
+    const s = service();
+    states['eligible, stale'].reach(s);
+    s.at(T + 60_000, end);
+
+    // Back in Registered, it is not considered, so a tick with no bus after its deadline, T + 72.4 s, ends nothing.
+    s.tick(T + 75_000);
+    expect(s.kinds().at(-1)).toBe('left');
+
+    // It returns at T + 80 s and is eligible again at T + 110 s, its dwell over, with still no bus of its route calling.
+    s.at(T + 80_000, start);
+    s.tick(T + 95_000);
+    s.at(T + 110_000);
+
+    expect(timeline(s.records).slice(-3)).toEqual([['returned', 80], ['eligible', 110], ['abandoned', 110]]);
+    expect(s.records.at(-1)).toMatchObject({ vehicleId: 'V1', payload: { reason: 'stale' } });
+    expect(s.outcomes).toStrictEqual([told]);
+  });
+
+  it('leaves a committed hail to be told unacknowledged at its own deadline', () => {
+    const s = service();
+    // Committed at T + 42.4 s with its deadline at T + 72.4 s; V1 then leaves the feed.
+    states.committed.reach(s);
+    s.tick(T + 45_000);
+
+    s.at(T + 72_445);
+    s.tick(T + 74_000);
+
+    expect(s.kinds().slice(-2)).toEqual(['committed', 'unacknowledged']);
+    expect(s.outcomes).toEqual([{ handle: HANDLE, stop: 'S', route: 'R', outcome: 'unacknowledged' }]);
   });
 });
 
@@ -1267,6 +1354,8 @@ const events = {
   tick: (s: Service, e: number) => s.tick(e, v1(e)),
   // V1 reports 100 m out, inside its stopping distance at the speed its last two reports give.
   'tick, too close': (s: Service, e: number) => s.tick(e, v1(e, 100)),
+  // A live snapshot V1 has left, naming no vehicle: no bus of route R calls (#163).
+  'tick, no bus': (s: Service, e: number) => s.tick(e),
   'wakeup dwell': fire('dwell'),
   'wakeup commit': fire('commit'),
   'wakeup deadline': fire('deadline'),
@@ -1293,6 +1382,8 @@ const CONFIRMED = 'an acknowledgement of its signal is confirmed: FR11; #61';
 const STALE_WAKEUP = 'not the wakeup the hail waits for: ADR-040 decisions 2 and 3; ADR-037 decision 1';
 const SAME_PRESENCE = 'presence runs from the first presence-start until a presence-end: ADR-006; ADR-040, annotated 07-10-2026';
 const FEED_RULE = 'ADR-017 and ADR-038, annotated 09-10-2026';
+const NOT_STALE = 'only a hail shown stale ends with no calling bus: #163, the owner\'s decision 26';
+const COMMITTED_STALE = `a committed hail is told unacknowledged at its own deadline: #61; ${NOT_STALE}`;
 const FEED = `a stale feed abandons every live hail: ${FEED_RULE}`;
 // Unattended stays, so a second lost connection writes nothing.
 const STILL_UNATTENDED: Row = [[], 'no reconnection event, so Unattended holds: ADR-010, annotated 09-10-2026', [(s, e) => s.at(e, lost), []]];
@@ -1425,6 +1516,22 @@ const table: Record<keyof typeof events, Record<State, Row>> = {
     spent: [[], ENDED],
     abandoned: [[], ENDED],
     'feed stale': [[], NO_HAIL],
+  },
+  'tick, no bus': {
+    none: [[], NO_HAIL],
+    registered: [[], NOT_ELIGIBLE],
+    left: [[], NOT_ELIGIBLE],
+    present: [[], NOT_ELIGIBLE],
+    'present, unattended': [[], NOT_ELIGIBLE],
+    eligible: [[], NOT_STALE, [fire('commit'), []]],
+    'eligible, unattended': [[], NOT_STALE, [fire('commit'), []]],
+    'eligible, stale': [[], 'its deadline, T + 72.4 s, is still to come: ADR-023', [fire('deadline'), ['abandoned stale']]],
+    committed: [[], COMMITTED_STALE, [fire('deadline'), ['unacknowledged']]],
+    'committed, unattended': [[], COMMITTED_STALE, [fire('deadline'), ['unacknowledged']]],
+    withdrawn: [[], ENDED],
+    spent: [[], ENDED],
+    abandoned: [[], ENDED],
+    'feed stale': [[], `${NO_HAIL}; the tick ends staleness: ${FEED_RULE}`, [(s, e) => s.at(e, register), ['registered']]],
   },
   'wakeup dwell': {
     none: [[], NO_HAIL],
