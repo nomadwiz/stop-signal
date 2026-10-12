@@ -189,6 +189,22 @@ final class ArmedTests: XCTestCase {
         fixes.send(10, from: melrose)
         try await until { [self] in model.armed == .stale }
 
+        // A reopen's presence report and Register go before a transition sensed meanwhile, so a slow presence-start
+        // never lands after the presence-end that follows it and leaves the passenger present at a stop they have left.
+        StubProtocol.requests = []
+        StubProtocol.streams = [Data()]
+        StubProtocol.delays = ["/presence/start": 0.3]
+        let moving = FakeFixes()
+        let rejoining = HailViewModel(api: HailApi(base: URL(string: "https://hail.test")!, handle: "h", session: StubProtocol.session), fixes: moving, reopen: .milliseconds(50))
+        moving.send(10, from: melrose)
+        try await rejoining.register(stop: melrose, route: "70-205", duration: 0)
+        try await until { StubProtocol.requests.filter { $0.url.path == "/outcomes" }.count == 2 }
+        try await Task.sleep(for: .milliseconds(100))
+        moving.send(200, from: melrose)
+        try await until { StubProtocol.requests.last?.url.path == "/presence/end" }
+        XCTAssertEqual(StubProtocol.requests.map(\.url.path).suffix(3), ["/presence/start", "/register", "/presence/end"])
+        try await rejoining.cancel()
+
         // An outcome ends what the hail shown is, so a reopen after it registers nothing.
         StubProtocol.requests = []
         StubProtocol.streams = [Data(event("outcome", "confirmed").utf8)]

@@ -29,8 +29,9 @@ final class HailViewModel {
     private var withdrawing = false
     private var sensing: Task<Void, Never>?
     private var listening: Task<Void, Never>?
-    // A reopen's presence report and Register, which a cancel waits for, so the service never meets the cancel first
-    // and arms the hail anew once it is withdrawn.
+    // A reopen's presence report and Register, which a cancel and a sensed transition wait for, so the service never
+    // meets either before them: a cancel first would have the hail armed anew once it is withdrawn, and a presence-end
+    // first would leave the passenger present at a stop they have left.
     private var rejoining: Task<Void, Never>?
     private let api: HailApi
     private let fixes: Fixes
@@ -127,12 +128,14 @@ final class HailViewModel {
     // A closed session's task is cancelled, but its stream still hands over fixes already buffered, and the view
     // model's state belongs to the newest session, so each step checks for cancellation first. `reported` finishes
     // once the first decisive fix is reported, which lets arming send Register; a first fix between 50 and 100 m is not
-    // decisive, so the wait goes on (ADR-045 decision 5, decided 12-10-2026).
-    // ponytail: a failed transition is not retried; it shows unreachable until a request succeeds or the stream reopens.
+    // decisive, so the wait goes on (ADR-045 decision 5, decided 12-10-2026). A fix waits for a reopen's presence
+    // report and Register, so a transition it senses never reaches the service before the older report (ADR-040).
+    // ponytail: a failed transition is not retried; it shows unreachable until a later request succeeds.
     private func sense(_ stop: Stop, _ fixes: AsyncStream<Fix>, _ reported: AsyncStream<Void>.Continuation) async {
         defer { reported.finish() }
         for await fix in fixes where !Task.isCancelled {
             defer { if present != nil { reported.finish() } }
+            await rejoining?.value
             guard let now = fix.present(at: stop.location, was: present), now != present else { continue }
             present = now
             await attempt { try await now ? api.presenceStart(stop: stop.id) : api.presenceEnd(stop: stop.id) }
