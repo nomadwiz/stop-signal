@@ -7,17 +7,29 @@ struct StopSignalApp: App {
     @State private var model = HailViewModel(api: HailApi(base: URL(string: "http://localhost:8080")!, handle: Handle.current()), fixes: DeviceFixes())
 
     var body: some Scene {
-        WindowGroup {
-            if model.registration == nil {
-                StopsScreen(model: model)
-            } else {
-                // ponytail: ArmedStatus's waiting tag alone until the Armed screen (#55) takes its place.
-                Text("Waiting")
-                    .tokenFont("headline")
+        WindowGroup { RootView(model: model) }
+    }
+}
+
+// Stops until a hail is armed, then Armed until an outcome. Armed replaces Stops' navigation stack rather than being
+// pushed on it, so it has no back button and no swipe-back (design-system README §The four screens).
+struct RootView: View {
+    let model: HailViewModel
+
+    var body: some View {
+        if let registration = model.registration {
+            if let outcome = model.outcome {
+                // ponytail: the outcome's name alone until the Outcome screen (#62) takes its place.
+                Text(outcome.outcome ?? "")
+                    .tokenFont("large-title")
                     .foregroundStyle(Tokens.color("ink"))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Tokens.color("surface"))
+            } else {
+                ArmedScreen(model: model, registration: registration)
             }
+        } else {
+            StopsScreen(model: model)
         }
     }
 }

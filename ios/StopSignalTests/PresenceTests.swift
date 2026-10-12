@@ -32,6 +32,7 @@ final class PresenceTests: XCTestCase {
     override func setUp() {
         StubProtocol.requests = []
         StubProtocol.reply = Data()
+        StubProtocol.streams = []
         StubProtocol.failing = false
         StubProtocol.delays = [:]
     }
