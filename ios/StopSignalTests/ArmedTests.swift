@@ -37,7 +37,7 @@ final class ArmedTests: XCTestCase {
 
     func status(_ value: String) -> Outcome { Outcome(stop: melrose.id, route: "70-205", status: value) }
 
-    var labels: (UIWindow) -> [String] { { [self] in elements($0).compactMap(\.accessibilityLabel) } }
+    func labels(_ window: UIWindow) -> [String] { elements(window).compactMap(\.accessibilityLabel) }
 
     // #55 acceptance 1: Armed has no back button and no other control, and is left only by Cancel hail or an outcome.
     func testTheScreenIsLeftOnlyByCancelHailOrAnOutcome() async throws {
@@ -93,10 +93,11 @@ final class ArmedTests: XCTestCase {
         XCTAssertEqual(shown(), "Hail sent to the 70. The bus is close. Waiting for the driver to confirm.")
         model.receive(status("moved"))
         XCTAssertEqual(shown(), "Hail moved to the next 70. The first bus was on a different trip. Your hail is now on the next 70.")
+        // A departure that closes the session ends unreachable with it, even when its presence/end fails.
+        StubProtocol.failing = true
         fixes.send(200, from: melrose)
         try await until { [self] in fixes.closed }
         XCTAssertEqual(shown(), "Hail finished. You moved away from stop 7177 after we hailed the bus. If you're not on the bus, arm a new hail.")
-        StubProtocol.failing = true
         XCTAssertTrue(element(elements(root), "Cancel hail").accessibilityActivate())
         try await until { [self] in model.armed == .unreachable }
         XCTAssertEqual(shown(), "Signal the driver yourself. We can't reach StopSignal right now, so your hail may not reach the driver. We'll keep trying.")
@@ -109,26 +110,23 @@ final class ArmedTests: XCTestCase {
         var played: [(Cue, String)] = []
         fixes.send(10, from: melrose)
         try await model.register(stop: melrose, route: "70-205", duration: 0)
+        // Each change waits for its cue: SwiftUI plays it in its own update, which a forced layout would skip.
         let screen = host(ArmedScreen(model: model, registration: model.registration!, play: { played.append(($0, $1)) }))
-        _ = elements(screen)
+        try await until { played.count == 1 }
         fixes.send(200, from: melrose)
-        try await until { [self] in model.present == false }
-        _ = elements(screen)
+        try await until { played.count == 2 }
         fixes.send(10, from: melrose)
-        try await until { [self] in model.present == true }
-        _ = elements(screen)
+        try await until { played.count == 3 }
         for change in ["stale", "waiting", "sent", "moved"] {
             model.receive(status(change))
-            // SwiftUI runs onChange in its own update; a layout forced before it skips the action.
-            try await Task.sleep(for: .milliseconds(100))
-            _ = elements(screen)
+            try await until { [count = played.count] in played.count == count + 1 }
         }
         fixes.send(200, from: melrose)
-        try await until { [self] in fixes.closed }
-        _ = elements(screen)
+        try await until { played.count == 8 }
         StubProtocol.failing = true
         try? await model.cancel()
-        _ = elements(screen)
+        try await until { played.count == 9 }
+        withExtendedLifetime(screen) {}
 
         XCTAssertEqual(played.map(\.0), [.tap, .headsUp, .tap, .headsUp, .tap, .tick, .ticks, .none, .headsUp])
         XCTAssertEqual(played[3].1, "Be ready to signal the driver. We've lost live times for this 70, so we may not be able to hail it. We'll still hail it if its times come back in time.")
@@ -183,11 +181,12 @@ final class ArmedTests: XCTestCase {
 
     // #55 acceptance 7: sent, moved and stale, and a return to waiting, come from the stream's status events (#158).
     func testSentMovedAndStaleComeFromTheStreamsStatusEvents() async throws {
+        // Each stream sends `sent` first, which marks the hail delivered, so the wait shows both events arrived.
         for (sent, shown) in [("sent", Armed.sent), ("moved", .moved), ("stale", .stale), ("waiting", .waiting)] {
-            StubProtocol.reply = Data((event("status", "stale") + event("status", sent)).utf8)
+            StubProtocol.reply = Data((event("status", "sent") + event("status", sent)).utf8)
             let armed = HailViewModel(api: HailApi(base: URL(string: "https://hail.test")!, handle: "h", session: StubProtocol.session), fixes: FakeFixes(), wait: .zero)
             try await armed.register(stop: melrose, route: "70-205", duration: 0)
-            try await until { armed.armed == shown && armed.status == sent }
+            try await until { armed.delivered && armed.armed == shown && armed.status == sent }
             try await armed.cancel()
         }
     }
@@ -211,5 +210,16 @@ final class ArmedTests: XCTestCase {
         let cancels = StubProtocol.requests.filter { $0.url.path == "/cancel" }
         XCTAssertEqual(cancels.map(\.method), ["POST", "POST"])
         XCTAssertEqual(cancels.last?.body, ["handle": "h", "stop": melrose.id, "route": "70-205"])
+
+        // A cancel during a reopen's Register waits for it, so the service never meets the cancel first and arms the
+        // hail anew once it is withdrawn.
+        StubProtocol.requests = []
+        StubProtocol.streams = [Data()]
+        try await model.register(stop: melrose, route: "70-205", duration: 0)
+        StubProtocol.delays = ["/register": 0.5]
+        try await until { StubProtocol.requests.filter { $0.url.path == "/outcomes" }.count == 2 }
+        try await model.cancel()
+        try await Task.sleep(for: .milliseconds(700))
+        XCTAssertEqual(StubProtocol.requests.map(\.url.path).last, "/cancel")
     }
 }

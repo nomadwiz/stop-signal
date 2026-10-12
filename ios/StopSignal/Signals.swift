@@ -32,6 +32,7 @@ enum Signals {
     private static let engine: CHHapticEngine? = {
         let session = AVAudioSession.sharedInstance()
         try? session.setCategory(.playback, options: .mixWithOthers)
+        try? session.setActive(true)
         return try? CHHapticEngine(audioSession: session)
     }()
 

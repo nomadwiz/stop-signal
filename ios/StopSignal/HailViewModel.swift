@@ -25,8 +25,13 @@ final class HailViewModel {
     // 11-10-2026).
     private var closed = false
     private var failed = false
+    // Cancel hail is in flight, so a reopen does not register the hail again.
+    private var withdrawing = false
     private var sensing: Task<Void, Never>?
     private var listening: Task<Void, Never>?
+    // A reopen's presence report and Register, which a cancel waits for, so the service never meets the cancel first
+    // and arms the hail anew once it is withdrawn.
+    private var rejoining: Task<Void, Never>?
     private let api: HailApi
     private let fixes: Fixes
     private let wait: Duration
@@ -70,7 +75,7 @@ final class HailViewModel {
     // an earlier session (ADR-045 decision 5). Arming replaces any session before it.
     func register(stop: Stop, route: String, duration: Int) async throws {
         close()
-        (present, delivered, outcome, status, closed, failed) = (nil, false, nil, "waiting", false, false)
+        (present, delivered, outcome, status, withdrawing) = (nil, false, nil, "waiting", false)
         let opened = fixes.open()
         let (first, reported) = AsyncStream.makeStream(of: Void.self)
         sensing = Task { await sense(stop, opened, reported) }
@@ -97,10 +102,12 @@ final class HailViewModel {
     // A failed cancel leaves the hail armed and shows unreachable, with Cancel hail still there.
     func cancel() async throws {
         guard let registration else { return }
+        withdrawing = true
+        await rejoining?.value
         do {
             try await api.cancel(stop: registration.stop.id, route: registration.route)
         } catch {
-            failed = true
+            (failed, withdrawing) = (true, false)
             throw error
         }
         close()
@@ -108,11 +115,13 @@ final class HailViewModel {
     }
 
     // The session stays open through confirmed and unacknowledged, and closes on cancel, on cannot-hail, or on a
-    // departure after a delivered hail (ADR-040, annotated 11-10-2026). Dropping the fixes ends it.
+    // departure after a delivered hail (ADR-040, annotated 11-10-2026). Dropping the fixes ends it. Nothing is tried
+    // once it closes, so unreachable ends with it.
     private func close() {
         sensing?.cancel()
         listening?.cancel()
-        (sensing, listening) = (nil, nil)
+        rejoining?.cancel()
+        (sensing, listening, rejoining, closed, failed) = (nil, nil, nil, false, false)
     }
 
     // A closed session's task is cancelled, but its stream still hands over fixes already buffered, and the view
@@ -126,16 +135,16 @@ final class HailViewModel {
             defer { if present != nil { reported.finish() } }
             guard let now = fix.present(at: stop.location, was: present), now != present else { continue }
             present = now
-            await report(now, at: stop)
+            await attempt { try await now ? api.presenceStart(stop: stop.id) : api.presenceEnd(stop: stop.id) }
             // Cancelling the session ends the loop at its next wait, and that ends the fixes' stream.
             if !now, delivered, !Task.isCancelled { close() }
         }
     }
 
     // A request the session's own close cancelled is not a failure.
-    private func report(_ present: Bool, at stop: Stop) async {
+    private func attempt(_ request: () async throws -> Void) async {
         do {
-            try await present ? api.presenceStart(stop: stop.id) : api.presenceEnd(stop: stop.id)
+            try await request()
             if !Task.isCancelled { failed = false }
         } catch {
             if !Task.isCancelled { failed = true }
@@ -150,14 +159,14 @@ final class HailViewModel {
         var reopening = false
         while !Task.isCancelled {
             try? await api.outcomes(opened: { [self] in
-                if reopening, live {
-                    if let present { await report(present, at: registration.stop) }
-                    do {
-                        try await api.register(stop: registration.stop.id, route: registration.route, duration: duration)
-                        if !Task.isCancelled { failed = false }
-                    } catch {
-                        if !Task.isCancelled { failed = true }
+                if reopening, live, !withdrawing {
+                    let stop = registration.stop.id
+                    let rejoin = Task {
+                        if let present { await attempt { try await present ? api.presenceStart(stop: stop) : api.presenceEnd(stop: stop) } }
+                        await attempt { try await api.register(stop: stop, route: registration.route, duration: duration) }
                     }
+                    rejoining = rejoin
+                    await rejoin.value
                 }
                 if !Task.isCancelled { closed = false }
             }) { [self] event in
