@@ -6,19 +6,17 @@ import SwiftUI
 import XCTest
 @testable import StopSignal
 
+// SwiftUI builds its accessibility tree only while an assistive technology is on. This private switch in
+// libAccessibility, called from the tests alone, turns it on as VoiceOver would; the app never calls it.
+func turnOnAccessibility() throws {
+    let library = dlopen("/usr/lib/libAccessibility.dylib", RTLD_NOW)
+    let enable = try XCTUnwrap(dlsym(library, "_AXSApplicationAccessibilitySetEnabled"), "libAccessibility no longer has _AXSApplicationAccessibilitySetEnabled")
+    unsafeBitCast(enable, to: (@convention(c) (Bool) -> Void).self)(true)
+}
+
+// Hosting and reading screens, shared by the screen tests.
 @MainActor
-final class StopsRegisterTests: XCTestCase {
-    let melrose = Stop.bundled.first { $0.id == "7177-4660a5ff" }!
-
-    override func setUpWithError() throws {
-        StubProtocol.requests = []
-        // SwiftUI builds its accessibility tree only while an assistive technology is on. This private switch in
-        // libAccessibility, called from the tests alone, turns it on as VoiceOver would; the app never calls it.
-        let library = dlopen("/usr/lib/libAccessibility.dylib", RTLD_NOW)
-        let enable = try XCTUnwrap(dlsym(library, "_AXSApplicationAccessibilitySetEnabled"), "libAccessibility no longer has _AXSApplicationAccessibilitySetEnabled")
-        unsafeBitCast(enable, to: (@convention(c) (Bool) -> Void).self)(true)
-    }
-
+extension XCTestCase {
     // `view` in a phone-sized window, kept by the test so its state lives across reads.
     func host(_ view: some View) -> UIWindow {
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
@@ -42,12 +40,22 @@ final class StopsRegisterTests: XCTestCase {
         elements(host(view))
     }
 
-    func model(_ session: URLSession = .shared) -> HailViewModel {
-        HailViewModel(api: HailApi(base: URL(string: "https://hail.test")!, handle: "h", session: session), fixes: FakeFixes(), wait: .zero)
-    }
-
     func element(_ elements: [NSObject], _ label: String) -> NSObject {
         elements.first { $0.accessibilityLabel == label }!
+    }
+}
+
+@MainActor
+final class StopsRegisterTests: XCTestCase {
+    let melrose = Stop.bundled.first { $0.id == "7177-4660a5ff" }!
+
+    override func setUpWithError() throws {
+        StubProtocol.requests = []
+        try turnOnAccessibility()
+    }
+
+    func model(_ session: URLSession = .shared) -> HailViewModel {
+        HailViewModel(api: HailApi(base: URL(string: "https://hail.test")!, handle: "h", session: session), fixes: FakeFixes(), wait: .zero)
     }
 
     // ADR-043: the stops on the seven routes through Melrose Street, each route by the id Register sends.
