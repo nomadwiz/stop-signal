@@ -27,8 +27,11 @@ final class ArmedTests: XCTestCase {
 
     // Waits up to 2 s for `done`, and fails if it never comes.
     func until(line: UInt = #line, _ done: @escaping () -> Bool) async throws {
-        for _ in 0..<100 where !done() { try await Task.sleep(for: .milliseconds(20)) }
-        XCTAssertTrue(done(), line: line)
+        for _ in 0..<100 {
+            if done() { return }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTFail("never done", line: line)
     }
 
     func event(_ key: String, _ value: String) -> String {
@@ -60,14 +63,21 @@ final class ArmedTests: XCTestCase {
         fixes.send(10, from: melrose)
         let root = host(RootView(model: model))
         var taps = 0
-        func tap(_ matching: (String) -> Bool) {
-            guard let target = elements(root).first(where: { matching($0.accessibilityLabel ?? "") }) else { return }
-            XCTAssertTrue(target.accessibilityActivate())
+        // Each step waits for its screen, and a step that never appears fails the test rather than going uncounted.
+        func tap(_ matching: @escaping (String) -> Bool) async throws -> String {
+            var target: NSObject?
+            try await until { [self] in
+                target = elements(root).first { matching($0.accessibilityLabel ?? "") }
+                return target != nil
+            }
+            let tapped = try XCTUnwrap(target)
+            XCTAssertTrue(tapped.accessibilityActivate())
             taps += 1
+            return tapped.accessibilityLabel ?? ""
         }
-        tap { $0.contains(", stop ") }
-        tap { $0.hasPrefix("Route ") && !$0.contains(", stop ") }
-        tap { $0.hasPrefix("Arm hail for the ") }
+        let stop = try await tap { $0.contains(", stop ") }
+        if stop.contains(#/Routes [^,]+, /#) { _ = try await tap { $0.hasPrefix("Route ") } }
+        _ = try await tap { $0.hasPrefix("Arm hail for the ") }
         try await until { [self] in model.registration != nil }
         XCTAssertLessThanOrEqual(taps, 3)
         XCTAssertEqual(labels(root).last, "Cancel hail")
