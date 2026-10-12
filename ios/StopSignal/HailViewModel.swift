@@ -136,6 +136,7 @@ final class HailViewModel {
         for await fix in fixes where !Task.isCancelled {
             defer { if present != nil { reported.finish() } }
             await rejoining?.value
+            guard !Task.isCancelled else { return }
             guard let now = fix.present(at: stop.location, was: present), now != present else { continue }
             present = now
             await attempt { try await now ? api.presenceStart(stop: stop.id) : api.presenceEnd(stop: stop.id) }
