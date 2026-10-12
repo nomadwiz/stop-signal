@@ -131,7 +131,17 @@ final class ArmedTests: XCTestCase {
         XCTAssertEqual(played.map(\.0), [.tap, .headsUp, .tap, .headsUp, .tap, .tick, .ticks, .none, .headsUp])
         XCTAssertEqual(played[3].1, "Be ready to signal the driver. We've lost live times for this 70, so we may not be able to hail it. We'll still hail it if its times come back in time.")
         XCTAssertEqual(played[7].1, "Hail finished. You moved away from stop 7177 after we hailed the bus. If you're not on the bus, arm a new hail.")
-        XCTAssertEqual(Cue.headsUp.length, .milliseconds(500))
+
+        // What each cue plays (signals.md): its haptic and audio events as type@start+length in seconds, the system
+        // sound's ticks, and how long VoiceOver waits, which is when the last sound ends.
+        func events(_ cue: Cue) -> [String] { Signals.events(cue).map { "\($0.type.rawValue)@\($0.relativeTime)+\($0.duration)" } }
+        XCTAssertEqual(events(.none), [])
+        XCTAssertEqual(events(.tap), ["HapticTransient@0.0+0.0"])
+        XCTAssertEqual(events(.tick), ["HapticTransient@0.0+0.0"])
+        XCTAssertEqual(events(.ticks), ["HapticTransient@0.0+0.0", "HapticTransient@0.15+0.0"])
+        XCTAssertEqual(events(.headsUp), ["HapticContinuous@0.0+0.3", "AudioContinuous@0.0+0.3", "HapticTransient@0.4+0.0", "AudioContinuous@0.4+0.1"])
+        XCTAssertEqual([Cue.none, .tap, .tick, .ticks, .headsUp].map(Signals.ticks), [[], [], [0], [0, 0.15], []])
+        XCTAssertEqual([Cue.none, .tap, .tick, .ticks, .headsUp].map(\.length), [.zero, .zero, .milliseconds(100), .milliseconds(250), .milliseconds(500)])
     }
 
     // #55 acceptance 5 (ADR-040 decisions 1 and 2), with the owner's decision of 13-10-2026 on a first fix beyond

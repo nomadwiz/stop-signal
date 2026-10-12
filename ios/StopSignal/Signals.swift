@@ -36,7 +36,8 @@ enum Signals {
         return try? CHHapticEngine(audioSession: session)
     }()
 
-    static func play(_ cue: Cue, announcing text: String) {
+    // The cue's haptic and audio events, played as one Core Haptics pattern.
+    static func events(_ cue: Cue) -> [CHHapticEvent] {
         let tap = { (at: Double) in
             CHHapticEvent(eventType: .hapticTransient, parameters: [.init(parameterID: .hapticIntensity, value: 0.4), .init(parameterID: .hapticSharpness, value: 0.3)], relativeTime: at)
         }
@@ -46,7 +47,7 @@ enum Signals {
             CHHapticEvent(eventType: .audioContinuous, parameters: [.init(parameterID: .audioPitch, value: 0), .init(parameterID: .audioVolume, value: 0.8)], relativeTime: at, duration: length)
         }
         let medium = [CHHapticEventParameter(parameterID: .hapticIntensity, value: 0.6)]
-        let events: [CHHapticEvent] = switch cue {
+        return switch cue {
         case .tap, .tick: [tap(0)]
         case .ticks: [tap(0), tap(gap)]
         case .headsUp: [
@@ -55,14 +56,26 @@ enum Signals {
         ]
         case .none: []
         }
+    }
+
+    // When, in seconds, the cue plays the system sound's tick.
+    static func ticks(_ cue: Cue) -> [Double] {
+        switch cue {
+        case .tick: [0]
+        case .ticks: [0, gap]
+        default: []
+        }
+    }
+
+    static func play(_ cue: Cue, announcing text: String) {
+        let events = events(cue)
         if let engine, !events.isEmpty {
             try? engine.start()
             try? engine.makePlayer(with: CHHapticPattern(events: events, parameters: [])).start(atTime: CHHapticTimeImmediate)
         }
-        if cue == .tick || cue == .ticks { AudioServicesPlaySystemSound(tick) }
-        if cue == .ticks {
+        for at in ticks(cue) {
             Task {
-                try? await Task.sleep(for: .seconds(gap))
+                try? await Task.sleep(for: .seconds(at))
                 AudioServicesPlaySystemSound(tick)
             }
         }
