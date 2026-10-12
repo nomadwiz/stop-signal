@@ -668,6 +668,25 @@ describe('hailCoordinator: a stale hail with no calling bus (#163)', () => {
     expect(s.outcomes).toEqual([]);
   });
 
+  it('leaves it live while it has left, and ends it when it is eligible again after its deadline with no bus (ADR-023, amended 12-10-2026; ADR-040)', () => {
+    const s = service();
+    states['eligible, stale'].reach(s);
+    s.at(T + 60_000, end);
+
+    // Back in Registered, it is not considered, so a tick with no bus after its deadline, T + 72.4 s, ends nothing.
+    s.tick(T + 75_000);
+    expect(s.kinds().at(-1)).toBe('left');
+
+    // It returns at T + 80 s and is eligible again at T + 110 s, its dwell over, with still no bus of its route calling.
+    s.at(T + 80_000, start);
+    s.tick(T + 95_000);
+    s.at(T + 110_000);
+
+    expect(timeline(s.records).slice(-3)).toEqual([['returned', 80], ['eligible', 110], ['abandoned', 110]]);
+    expect(s.records.at(-1)).toMatchObject({ vehicleId: 'V1', payload: { reason: 'stale' } });
+    expect(s.outcomes).toStrictEqual([told]);
+  });
+
   it('leaves a committed hail to be told unacknowledged at its own deadline', () => {
     const s = service();
     // Committed at T + 42.4 s with its deadline at T + 72.4 s; V1 then leaves the feed.
