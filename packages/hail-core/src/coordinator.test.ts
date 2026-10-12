@@ -654,6 +654,50 @@ describe('hailCoordinator: a stale hail with no calling bus (#163)', () => {
     expect(s.outcomes).toStrictEqual([told]);
   });
 
+  // #165 (the owner's decision 29, 13-10-2026): a standing stale pick has no deadline of its own (ADR-023 decision 3), so
+  // the hail keeps the one from its last moving pick. V2 stands 1,200 m out, beyond the stopped-vehicle reach.
+  const standing = (t: number) => report('V2', 'A2', 1_200, t);
+
+  it('abandons it when a standing stale pick that replaced its moving one after that deadline leaves the feed', () => {
+    const s = service();
+    // A, V1, reports last at T + 1 s, so its stale deadline is T + 91.6 s and the 90 s cutoff passes it over from
+    // T + 91 s. B, V2, stands farther out, last reporting at T + 41 s: at A's deadline wakeup it is the pick.
+    const a = (t: number) => v1(t, 981.6 - (t - T - 1_000) / 100);
+    s.at(T - 60_000, register, start);
+    s.tick(T - 19_000, a(T - 19_000));
+    s.tick(T + 1_000, a(T + 1_000));
+    for (const t of [T + 21_000, T + 41_000]) s.tick(t, a(T + 1_000), standing(t));
+    for (const t of [T + 61_000, T + 81_000]) s.tick(t, a(T + 1_000), standing(T + 41_000));
+    s.at(T + 91_605);
+    s.tick(T + 101_000, a(T + 1_000), standing(T + 41_000));
+    expect(s.kinds()).toEqual(['registered', 'present', 'eligible']);
+
+    // B leaves the feed, which stays live, with no bus of route R calling.
+    s.tick(T + 111_000);
+
+    expect(s.records.at(-1)).toMatchObject({ at: T + 111_000, kind: 'abandoned', vehicleId: 'V2', payload: { reason: 'stale' } });
+    expect(s.outcomes).toStrictEqual([told]);
+  });
+
+  it('keeps the moving pick\'s deadline when a standing stale pick replaces it, and ends there once nothing calls', () => {
+    const s = service();
+    // V1's last report, at T, is stale at the commit wakeup, so the hail waits on its deadline, T + 72.4 s. V2 stands
+    // farther out, last reporting at T.
+    s.at(T - 60_000, register, start);
+    for (const t of [T - 20_000, T]) s.tick(t, v1(t), standing(t));
+    for (const t of [T + 20_000, T + 40_000]) s.tick(t, v1(T), standing(T));
+    s.at(T + 42_445);
+    // V1 leaves the feed, so V2, standing and stale, is the pick; then V2 leaves too, before the deadline.
+    s.tick(T + 50_000, standing(T));
+    s.tick(T + 60_000);
+    expect(s.kinds()).toEqual(['registered', 'present', 'eligible']);
+
+    s.at(T + 72_445);
+
+    expect(s.records.at(-1)).toMatchObject({ at: T + 72_445, kind: 'abandoned', vehicleId: 'V2', payload: { reason: 'stale' } });
+    expect(s.outcomes).toStrictEqual([told]);
+  });
+
   it('leaves it unchanged once its pick turns fresh before the deadline, though the pick then leaves the feed', () => {
     const s = service();
     states['eligible, stale'].reach(s);

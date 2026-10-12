@@ -208,11 +208,14 @@ export function hailCoordinator({ clock, record, signals, notify, schedule, time
       // the vehicle's next report until the deadline extrapolated from it (ADR-023, ADR-037 decision 1). Still stale
       // then, or already past it, the hail is abandoned (ADR-023, decided 07-10-2026). A deadline wakeup set for the
       // run the hail last resolved to ends it only on that run: a new pick, as when the 90 s cutoff passes the old one
-      // over, waits for its own deadline (ADR-039, annotated 08-10-2026).
+      // over, waits for its own deadline (ADR-039, annotated 08-10-2026). A standing pick has no deadline (ADR-023
+      // decision 3), so the hail keeps the one from its last moving pick (#165, the owner's decision 29, 13-10-2026).
       if (p.stale) {
         if ((purpose === 'deadline' && resolved) || (p.speedMps > 0 && !d)) return abandon(h, 'stale', vehicleId);
-        h.deadline = d?.deadline;
-        if (d) wake(h, 'deadline', d.deadline);
+        if (d) {
+          h.deadline = d.deadline;
+          wake(h, 'deadline', d.deadline);
+        }
         return show(h, 'stale');
       }
       // At speed 0 no deadline follows; a stopped vehicle within reach is due at once, and one beyond waits for its next
