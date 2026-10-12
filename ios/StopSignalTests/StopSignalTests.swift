@@ -6,7 +6,7 @@ import XCTest
 
 // Answers every request in place of the network and keeps what it was sent: 200 with `reply` for the
 // outcome stream, 204 with no body for the other routes, as packages/hail-service/src/server.ts answers.
-final class StubProtocol: URLProtocol {
+final class StubProtocol: URLProtocol, @unchecked Sendable {
     typealias Request = (method: String, url: URL, body: NSDictionary, timeout: TimeInterval)
     // URLSession loads requests on its own threads, several at once while a hail is armed (#58), so the log is locked.
     private nonisolated(unsafe) static var log: [Request] = []
@@ -18,6 +18,8 @@ final class StubProtocol: URLProtocol {
     nonisolated(unsafe) static var reply = Data()
     // Set, every route but the stream answers 500.
     nonisolated(unsafe) static var failing = false
+    // Seconds a request to each path takes before the service sees it.
+    nonisolated(unsafe) static var delays: [String: TimeInterval] = [:]
 
     static var session: URLSession {
         let configuration = URLSessionConfiguration.ephemeral
@@ -39,6 +41,13 @@ final class StubProtocol: URLProtocol {
             bytes.append(buffer, count: count)
         }
         stream.close()
+        // A delayed request is answered from a timer on this loading thread's run loop, which every request shares, so
+        // sleeping here would hold every other request back too.
+        guard let delay = Self.delays[request.url!.path] else { return answer(bytes) }
+        RunLoop.current.add(Timer(timeInterval: delay, repeats: false) { [bytes] _ in self.answer(bytes) }, forMode: .common)
+    }
+
+    private func answer(_ bytes: Data) {
         let body = try! JSONSerialization.jsonObject(with: bytes) as! NSDictionary
         Self.lock.withLock { Self.log.append((request.httpMethod!, request.url!, body, request.timeoutInterval)) }
         let streaming = request.url!.path == "/outcomes"
@@ -58,6 +67,7 @@ final class StopSignalTests: XCTestCase {
         StubProtocol.requests = []
         StubProtocol.reply = Data()
         StubProtocol.failing = false
+        StubProtocol.delays = [:]
     }
 
     // m1-revised.md §6.1: iOS 17.0 or later, iPhone, portrait only.

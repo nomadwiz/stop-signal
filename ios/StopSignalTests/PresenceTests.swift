@@ -33,6 +33,7 @@ final class PresenceTests: XCTestCase {
         StubProtocol.requests = []
         StubProtocol.reply = Data()
         StubProtocol.failing = false
+        StubProtocol.delays = [:]
     }
 
     // Closes the armed session, so no test's session outlives it.
@@ -93,7 +94,18 @@ final class PresenceTests: XCTestCase {
         XCTAssertEqual(StubProtocol.requests.map(\.url.path).filter { $0 != "/outcomes" }, ["/presence/end", "/register"])
     }
 
-    // The owner's decision 28 of 12-10-2026: a first fix between 50 and 100 m is not decisive, so arming waits on for a
+    // ADR-045 decision 5: once a decisive fix has arrived within the wait, Register waits for its report to reach the
+    // service, however long that takes.
+    func testADecisiveFixWithinTheWaitHoldsRegisterUntilItsReportArrives() async throws {
+        StubProtocol.delays = ["/presence/end": 0.6]
+        let slow = HailViewModel(api: HailApi(base: URL(string: "https://hail.test")!, handle: "h", session: StubProtocol.session), fixes: fixes, wait: .milliseconds(200))
+        fixes.send(200, from: melrose)
+        try await slow.register(stop: melrose, route: "70-205", duration: 0)
+        XCTAssertEqual(StubProtocol.requests.map(\.url.path).filter { $0 != "/outcomes" }, ["/presence/end", "/register"])
+        try await slow.cancel()
+    }
+
+    // ADR-045 decision 5, decided 12-10-2026: a first fix between 50 and 100 m is not decisive, so arming waits on for a
     // decisive fix, or for the wait to end, before Register.
     func testAFirstFixBetween50And100mHoldsRegisterUntilADecisiveFix() async throws {
         fixes.send(75, from: melrose)

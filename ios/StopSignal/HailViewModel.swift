@@ -46,7 +46,10 @@ final class HailViewModel {
         sensing = Task { await sense(stop, opened, reported) }
         let timer = Task { [wait] in
             try? await Task.sleep(for: wait)
-            reported.finish()
+            // A decisive fix within the wait holds Register until its report completes; `sense` finishes it then.
+            // ponytail: a stalled report holds Register up to URLSession's 60 s default; shorten presence requests'
+            // timeout if a device shows it.
+            if present == nil { reported.finish() }
         }
         for await _ in first {}
         timer.cancel()
@@ -78,13 +81,13 @@ final class HailViewModel {
     // A closed session's task is cancelled, but its stream still hands over fixes already buffered, and the view
     // model's state belongs to the newest session, so each step checks for cancellation first. `reported` finishes
     // once the first decisive fix is reported, which lets arming send Register; a first fix between 50 and 100 m is not
-    // decisive, so the wait goes on (the owner's decision 28 of 12-10-2026).
+    // decisive, so the wait goes on (ADR-045 decision 5, decided 12-10-2026).
     // ponytail: a failed transition is not retried, and the stream is not reopened; #55 shows unreachable and re-arms.
     private func sense(_ stop: Stop, _ fixes: AsyncStream<Fix>, _ reported: AsyncStream<Void>.Continuation) async {
         defer { reported.finish() }
         for await fix in fixes where !Task.isCancelled {
             defer { if present != nil { reported.finish() } }
-            guard let now = fix.present(at: stop.location, was: present, first: present == nil), now != present else { continue }
+            guard let now = fix.present(at: stop.location, was: present), now != present else { continue }
             present = now
             if now {
                 try? await api.presenceStart(stop: stop.id)
