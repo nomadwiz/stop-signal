@@ -222,7 +222,7 @@ final class ArmedTests: XCTestCase {
         fixes.send(10, from: melrose)
         try await model.register(stop: melrose, route: "70-205", duration: 0)
         let root = host(RootView(model: model))
-        try await until { [self] in labels(root) == ["cannot-hail"] }
+        try await until { [self] in labels(root).first?.hasPrefix("Could not hail. ") == true }
         try await until { [self] in fixes.closed }
         try await Task.sleep(for: .milliseconds(200))
         XCTAssertEqual(StubProtocol.requests.map(\.url.path), ["/presence/start", "/register", "/outcomes", "/outcomes"])
@@ -230,13 +230,13 @@ final class ArmedTests: XCTestCase {
 
     // #168: a confirmed or unacknowledged sent while the stream was closed is replayed when it reopens, and shown.
     func testAReplayedConfirmedOrUnacknowledgedIsShown() async throws {
-        for replayed in ["confirmed", "unacknowledged"] {
+        for (replayed, tag) in [("confirmed", "Confirmed. "), ("unacknowledged", "Not confirmed. ")] {
             StubProtocol.requests = []
             StubProtocol.streams = [Data(), Data((event("outcome", replayed) + ": replayed\n\n").utf8)]
             let armed = HailViewModel(api: HailApi(base: URL(string: "https://hail.test")!, handle: "h", session: StubProtocol.session), fixes: FakeFixes(), wait: .zero, reopen: .milliseconds(50))
             try await armed.register(stop: melrose, route: "70-205", duration: 0)
             let root = host(RootView(model: armed))
-            try await until { [self] in labels(root) == [replayed] }
+            try await until { [self] in labels(root).first?.hasPrefix(tag) == true }
             try await Task.sleep(for: .milliseconds(200))
             XCTAssertEqual(StubProtocol.requests.map(\.url.path).filter { $0 == "/register" }.count, 1)
             try await armed.cancel()

@@ -38,9 +38,12 @@ struct Stop: Decodable, Hashable, Identifiable {
         return matched.map { ($0, here.distance(from: $0.location)) }.sorted { $0.1 < $1.1 }.map(\.0)
     }
 
-    // "40 m" under a kilometre, "1.2 km" from there, as StopRow and OutcomeCard write distances.
     func distance(from here: CLLocation) -> String {
-        let metres = here.distance(from: location)
-        return metres < 1000 ? "\(Int(metres.rounded())) m" : String(format: "%.1f km", metres / 1000)
+        Stop.distance(here.distance(from: location))
+    }
+
+    // "40 m" under a kilometre, "1.2 km" from there, as StopRow and OutcomeCard write distances.
+    static func distance(_ metres: Double) -> String {
+        metres < 1000 ? "\(Int(metres.rounded())) m" : String(format: "%.1f km", metres / 1000)
     }
 }

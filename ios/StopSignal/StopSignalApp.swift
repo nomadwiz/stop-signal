@@ -11,20 +11,16 @@ struct StopSignalApp: App {
     }
 }
 
-// Stops until a hail is armed, then Armed until an outcome. Armed replaces Stops' navigation stack rather than being
-// pushed on it, so it has no back button and no swipe-back (design-system README §The four screens).
+// Stops until a hail is armed, then Armed until an outcome, then Outcome until Done or a new hail. Armed and Outcome
+// replace Stops' navigation stack rather than being pushed on it, so neither has a back button or swipe-back
+// (design-system README §The four screens).
 struct RootView: View {
     let model: HailViewModel
 
     var body: some View {
         if let registration = model.registration {
             if let outcome = model.outcome {
-                // ponytail: the outcome's name alone until the Outcome screen (#62) takes its place.
-                Text(outcome.outcome ?? "")
-                    .tokenFont("large-title")
-                    .foregroundStyle(Tokens.color("ink"))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Tokens.color("surface"))
+                OutcomeScreen(model: model, registration: registration, outcome: outcome)
             } else {
                 ArmedScreen(model: model, registration: registration)
             }

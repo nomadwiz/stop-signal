@@ -12,6 +12,9 @@ final class HailViewModel {
     }
 
     private(set) var registration: Registration?
+    // The hail the armed session belongs to. Done clears `registration`, the hail shown, but not this, so the stream's
+    // events still reach the session and a later cannot-hail still closes it (ADR-040).
+    private var session: Registration?
     // Whether the phone is at the registered stop, by ADR-045's rule; nil until the session's first decisive fix.
     private(set) var present: Bool?
     // Whether a hail was delivered to the driver, which decides what a departure does (ADR-010 decision 1; ADR-040).
@@ -76,7 +79,7 @@ final class HailViewModel {
     // an earlier session (ADR-045 decision 5). Arming replaces any session before it.
     func register(stop: Stop, route: String, duration: Int) async throws {
         close()
-        (present, delivered, outcome, status, withdrawing) = (nil, false, nil, "waiting", false)
+        (present, delivered, status, withdrawing) = (nil, false, "waiting", false)
         let opened = fixes.open()
         let (first, reported) = AsyncStream.makeStream(of: Void.self)
         sensing = Task { await sense(stop, opened, reported) }
@@ -95,9 +98,17 @@ final class HailViewModel {
             close()
             throw error
         }
+        // The outcome clears only now, so a failed "Hail the next 70" leaves the passenger on Outcome.
         let registration = Registration(stop: stop, route: route)
-        self.registration = registration
+        (self.registration, session, outcome) = (registration, registration, nil)
         listening = Task { await listen(registration, duration) }
+    }
+
+    // Done leaves Outcome for Stops. It neither cancels the hail nor ends the session, which stays open until a
+    // cannot-hail, a departure after a delivered hail or the next arming closes it (ADR-040; the owner's decision 4 of
+    // 14-10-2026). An outcome after Done is not shown.
+    func done() {
+        registration = nil
     }
 
     // A failed cancel leaves the hail armed and shows unreachable, with Cancel hail still there.
@@ -112,7 +123,7 @@ final class HailViewModel {
             throw error
         }
         close()
-        self.registration = nil
+        (self.registration, session) = (nil, nil)
     }
 
     // The session stays open through confirmed and unacknowledged, and closes on cancel, on cannot-hail, or on a
@@ -185,7 +196,7 @@ final class HailViewModel {
     }
 
     func receive(_ event: Outcome) {
-        guard event.stop == registration?.stop.id, event.route == registration?.route else { return }
+        guard event.stop == session?.stop.id, event.route == session?.route else { return }
         if event.status == "sent" || event.status == "moved" || event.outcome == "confirmed" || event.outcome == "unacknowledged" {
             delivered = true
         }
