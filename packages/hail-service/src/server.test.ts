@@ -28,10 +28,15 @@ async function serve(submit?: (event: HailEvent) => void) {
 const post = (url: string, body: string, signal?: AbortSignal) =>
   fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body, signal });
 
-// Everything a stream sends until `text` has arrived, however the network splits it into chunks.
+// Everything a stream sends until `text` has arrived, however the network splits it into chunks. A stream that ends
+// first fails the test with what did arrive, rather than looping on reads that resolve at once.
 async function readUntil(reader: ReadableStreamDefaultReader<string>, text: string) {
   let received = '';
-  while (!received.includes(text)) received += (await reader.read()).value;
+  while (!received.includes(text)) {
+    const { value, done } = await reader.read();
+    if (done) throw new Error(`the stream ended before ${JSON.stringify(text)}: ${JSON.stringify(received)}`);
+    received += value;
+  }
   return received;
 }
 
@@ -231,6 +236,24 @@ describe('hailServer, HailApi', () => {
     );
     await post(`${base}/register`, JSON.stringify({ handle, stop, route: '70', duration: 30 }));
     expect(await read(replayed)).toBe(otherStop + replayed);
+  });
+
+  // The coordinator can end a hail inside the register itself, as it does when the feed is stale, and the app opens its
+  // stream only after Register returns, so that outcome reaches it only by the replay. The register clears the stop's
+  // kept outcomes before it is applied, not after.
+  it('replays an outcome sent while its register is applied', async () => {
+    let passengers: ReturnType<typeof passengerChannel> | undefined;
+    const served = await serve((event) => {
+      if (event.kind === 'register') passengers!.outcome(event.handle, { stop: event.stopId, route: event.routeId, outcome: 'cannot-hail', reason: 'stale' });
+    });
+    passengers = served.passengers;
+
+    await post(`${served.base}/register`, JSON.stringify({ handle, stop, route, duration: 30 }));
+    const response = await post(`${served.base}/outcomes`, JSON.stringify({ handle }), new AbortController().signal);
+
+    expect(await readUntil(response.body!.pipeThrough(new TextDecoderStream()).getReader(), replayed)).toBe(
+      'event: outcome\ndata: {"stop":"7177-4660a5ff","route":"30","outcome":"cannot-hail","reason":"stale"}\n\n' + replayed,
+    );
   });
 
   // ADR-032, annotated 05-10-2026: only the last of a handle's open streams submits connection-lost on closing,
