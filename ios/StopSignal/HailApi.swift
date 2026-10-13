@@ -30,7 +30,7 @@ struct HailApi {
     // lost. It opens with the outcomes it replays, then `: replayed`, and `opened` is awaited only once that line is
     // read, so a reopen never registers a hail whose outcome is still on its way (#168; the owner's decision 41 of
     // 13-10-2026).
-    // The stream is silent until an outcome, so it takes no practical idle timeout: URLSession's default 60 s would
+    // After the replay the stream is silent until an outcome, so it takes no practical idle timeout: URLSession's default 60 s would
     // close it on any longer wait, and the service would mark that passenger Unattended (ADR-010 decision 3).
     func outcomes(opened: () async -> Void, _ receive: (Outcome) -> Void) async throws {
         var stream = try request("outcomes", ["handle": handle])
