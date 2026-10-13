@@ -76,7 +76,7 @@ final class HailViewModel {
     // an earlier session (ADR-045 decision 5). Arming replaces any session before it.
     func register(stop: Stop, route: String, duration: Int) async throws {
         close()
-        (present, delivered, outcome, status, withdrawing) = (nil, false, nil, "waiting", false)
+        (present, delivered, status, withdrawing) = (nil, false, "waiting", false)
         let opened = fixes.open()
         let (first, reported) = AsyncStream.makeStream(of: Void.self)
         sensing = Task { await sense(stop, opened, reported) }
@@ -95,9 +95,17 @@ final class HailViewModel {
             close()
             throw error
         }
+        // The outcome clears only now, so a failed "Hail the next 70" leaves the passenger on Outcome.
         let registration = Registration(stop: stop, route: route)
-        self.registration = registration
+        (self.registration, outcome) = (registration, nil)
         listening = Task { await listen(registration, duration) }
+    }
+
+    // Done leaves Outcome for Stops. It neither cancels the hail nor ends the session, which stays open until a
+    // departure, a cancel or the next arming closes it (ADR-040; the owner's decision 4 of 14-10-2026). With no
+    // registration, the stream's later events for this hail are ignored, because nothing shows them.
+    func done() {
+        registration = nil
     }
 
     // A failed cancel leaves the hail armed and shows unreachable, with Cancel hail still there.

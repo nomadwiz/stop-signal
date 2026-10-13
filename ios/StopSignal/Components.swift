@@ -182,20 +182,22 @@ struct ConfirmPanel: View {
     }
 }
 
-// The screen's one main action: full width, 64 pt tall, signal yellow with an ink border (MainAction).
+// The screen's one main action: full width, 64 pt tall, signal yellow with an ink border (MainAction). The secondary
+// variant is the outline button for an alternative, at the standard 44 pt (components/bundle.css).
 struct MainAction: View {
     let label: String
+    var secondary = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             Text(label)
                 .tokenFont("headline")
-                .foregroundStyle(Tokens.color("on-signal"))
+                .foregroundStyle(Tokens.color(secondary ? "ink" : "on-signal"))
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, Tokens.space("space-4"))
-                .frame(maxWidth: .infinity, minHeight: Tokens.size("target-primary"))
-                .bordered(fill: "signal", stroke: "ink", radius: "radius-lg")
+                .frame(maxWidth: .infinity, minHeight: Tokens.size(secondary ? "target-standard" : "target-primary"))
+                .bordered(fill: secondary ? "surface-raised" : "signal", stroke: secondary ? "line" : "ink", radius: "radius-lg")
         }
         .buttonStyle(.plain)
     }
