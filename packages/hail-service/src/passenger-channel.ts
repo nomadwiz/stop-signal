@@ -16,24 +16,25 @@ export function passengerChannel(submit: (event: HailEvent) => void): Notificati
 } {
   const streams = new Map<string, Set<ServerResponse>>();
   const kept = new Map<string, Map<string, Outcome>>();
-  const send = (res: ServerResponse, outcome: Outcome) => res.write(`event: outcome\ndata: ${JSON.stringify(outcome)}\n\n`);
+  const send = (res: ServerResponse, event: 'outcome' | 'status', data: object) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   return {
     outcome(handle, outcome) {
       const last = kept.get(handle) ?? new Map<string, Outcome>();
       kept.set(handle, last.set(JSON.stringify([outcome.stop, outcome.route]), outcome));
-      for (const res of streams.get(handle) ?? []) send(res, outcome);
+      for (const res of streams.get(handle) ?? []) send(res, 'outcome', outcome);
     },
     registered(handle, stop) {
-      for (const [key, outcome] of kept.get(handle) ?? []) if (outcome.stop === stop) kept.get(handle)!.delete(key);
+      const last = kept.get(handle) ?? new Map<string, Outcome>();
+      for (const [key, outcome] of last) if (outcome.stop === stop) last.delete(key);
     },
     status(handle, status) {
-      for (const res of streams.get(handle) ?? []) res.write(`event: status\ndata: ${JSON.stringify(status)}\n\n`);
+      for (const res of streams.get(handle) ?? []) send(res, 'status', status);
     },
     stream(handle, res) {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' }).flushHeaders();
       const open = streams.get(handle) ?? new Set<ServerResponse>();
       streams.set(handle, open.add(res));
-      for (const outcome of kept.get(handle)?.values() ?? []) send(res, outcome);
+      for (const outcome of kept.get(handle)?.values() ?? []) send(res, 'outcome', outcome);
       // A comment line every SSE client skips: the replay has ended, so the device may register again (the owner's
       // decision 41 of 13-10-2026). It is sent with nothing to replay too, so silence never stands for an empty replay.
       res.write(': replayed\n\n');
