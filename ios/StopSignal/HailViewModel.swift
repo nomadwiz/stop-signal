@@ -158,7 +158,9 @@ final class HailViewModel {
     // Holds the outcome stream open, and reopens it whenever it closes. On a reopen, while the hail shown is live, the
     // app reports its presence, if it has had a decisive fix, and then registers again (the owner's decision 4 of
     // 13-10-2026), so a service that lost the hail, as a restart does, holds it and the passenger's presence again. A
-    // service that still holds them changes nothing for either (`case 'register'` in coordinator.ts).
+    // service that still holds them changes nothing for either (`case 'register'` in coordinator.ts). The reopen runs
+    // after the stream's replay, so an outcome sent while it was closed has already ended the hail shown, and a
+    // replayed cannot-hail has closed the session (#168).
     private func listen(_ registration: Registration, _ duration: Int) async {
         var reopening = false
         while !Task.isCancelled {

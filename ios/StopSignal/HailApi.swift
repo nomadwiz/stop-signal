@@ -25,19 +25,21 @@ struct HailApi {
         try await post("presence/end", ["handle": handle, "stop": stop])
     }
 
-    // Holds the outcome stream open, awaits `opened` once the service answers, and hands each event to `receive` until
-    // the stream ends. The server sends each as `event: outcome` or `event: status` with one `data:` line; closing the
-    // last stream is the passenger's connection lost.
-    // The stream is silent until an outcome, so it takes no practical idle timeout: URLSession's default 60 s would
+    // Holds the outcome stream open and hands each event to `receive` until the stream ends. The server sends each as
+    // `event: outcome` or `event: status` with one `data:` line; closing the last stream is the passenger's connection
+    // lost. It opens with the outcomes it replays, then `: replayed`, and `opened` is awaited only once that line is
+    // read, so a reopen never registers a hail whose outcome is still on its way (#168; the owner's decision 41 of
+    // 13-10-2026).
+    // After the replay the stream is silent until an outcome, so it takes no practical idle timeout: URLSession's default 60 s would
     // close it on any longer wait, and the service would mark that passenger Unattended (ADR-010 decision 3).
     func outcomes(opened: () async -> Void, _ receive: (Outcome) -> Void) async throws {
         var stream = try request("outcomes", ["handle": handle])
         stream.timeoutInterval = TimeInterval(Int32.max)
         let (lines, response) = try await session.bytes(for: stream)
         try check(response)
-        await opened()
-        for try await line in lines.lines where line.hasPrefix("data:") {
-            receive(try JSONDecoder().decode(Outcome.self, from: Data(line.dropFirst(5).utf8)))
+        for try await line in lines.lines {
+            if line == ": replayed" { await opened() }
+            if line.hasPrefix("data:") { receive(try JSONDecoder().decode(Outcome.self, from: Data(line.dropFirst(5).utf8))) }
         }
     }
 

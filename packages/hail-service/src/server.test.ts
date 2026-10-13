@@ -28,6 +28,22 @@ async function serve(submit?: (event: HailEvent) => void) {
 const post = (url: string, body: string, signal?: AbortSignal) =>
   fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body, signal });
 
+// Everything a stream sends until `text` has arrived, however the network splits it into chunks. A stream that ends
+// first fails the test with what did arrive, rather than looping on reads that resolve at once.
+async function readUntil(reader: ReadableStreamDefaultReader<string>, text: string) {
+  let received = '';
+  while (!received.includes(text)) {
+    const { value, done } = await reader.read();
+    if (done) throw new Error(`the stream ended before ${JSON.stringify(text)}: ${JSON.stringify(received)}`);
+    received += value;
+  }
+  return received;
+}
+
+// Ends the replay on every stream open, so the device knows nothing more is being re-sent (the owner's decision 41 of
+// 13-10-2026).
+const replayed = ': replayed\n\n';
+
 describe('hailServer, the driver console routes', () => {
   it('applies an acknowledgement in the loop as a console-ack event', async () => {
     const { base, applied } = await serve();
@@ -176,7 +192,9 @@ describe('hailServer, HailApi', () => {
     passengers.outcome(handle, { stop, route, outcome: 'unacknowledged' });
 
     expect(response.headers.get('content-type')).toBe('text/event-stream');
-    expect((await reader.read()).value).toBe('event: outcome\ndata: {"stop":"7177-4660a5ff","route":"30","outcome":"unacknowledged"}\n\n');
+    const unacknowledged = 'event: outcome\ndata: {"stop":"7177-4660a5ff","route":"30","outcome":"unacknowledged"}\n\n';
+    // With nothing to replay, the stream opens with the replay's end alone.
+    expect(await readUntil(reader, unacknowledged)).toBe(replayed + unacknowledged);
     expect(applied).toEqual([]);
 
     controller.abort();
@@ -193,7 +211,49 @@ describe('hailServer, HailApi', () => {
     passengers.status('a0000000-0000-4000-8000-000000000000', { stop, route, status: 'sent' });
     passengers.status(handle, { stop, route, status: 'stale' });
 
-    expect((await reader.read()).value).toBe('event: status\ndata: {"stop":"7177-4660a5ff","route":"30","status":"stale"}\n\n');
+    const stale = 'event: status\ndata: {"stop":"7177-4660a5ff","route":"30","status":"stale"}\n\n';
+    expect(await readUntil(reader, stale)).toBe(replayed + stale);
+  });
+
+  // #168: an outcome sent while the stream was closed reaches the device when it opens one. Each registration's last
+  // outcome is kept, an ended hail's included, until the handle registers again at that stop (ADR-032, annotated
+  // 13-10-2026). The replay ends with `: replayed`.
+  it('re-sends the last outcome of each of the handle\'s registrations when its stream opens, until it registers again at that stop', async () => {
+    const { base, passengers } = await serve();
+    const other = '7178-4660a5ff';
+    passengers.outcome(handle, { stop, route, outcome: 'unacknowledged' });
+    passengers.outcome(handle, { stop, route, outcome: 'cannot-hail', reason: 'stale' });
+    passengers.outcome(handle, { stop: other, route, outcome: 'confirmed' });
+    passengers.outcome('a0000000-0000-4000-8000-000000000000', { stop, route, outcome: 'confirmed' });
+    const read = async (text: string) => {
+      const response = await post(`${base}/outcomes`, JSON.stringify({ handle }), new AbortController().signal);
+      return readUntil(response.body!.pipeThrough(new TextDecoderStream()).getReader(), text);
+    };
+    const otherStop = 'event: outcome\ndata: {"stop":"7178-4660a5ff","route":"30","outcome":"confirmed"}\n\n';
+
+    expect(await read(replayed)).toBe(
+      'event: outcome\ndata: {"stop":"7177-4660a5ff","route":"30","outcome":"cannot-hail","reason":"stale"}\n\n' + otherStop + replayed,
+    );
+    await post(`${base}/register`, JSON.stringify({ handle, stop, route: '70', duration: 30 }));
+    expect(await read(replayed)).toBe(otherStop + replayed);
+  });
+
+  // The coordinator can end a hail inside the register itself, as it does when the feed is stale, and the app opens its
+  // stream only after Register returns, so that outcome reaches it only by the replay. The register clears the stop's
+  // kept outcomes before it is applied, not after.
+  it('replays an outcome sent while its register is applied', async () => {
+    let passengers: ReturnType<typeof passengerChannel> | undefined;
+    const served = await serve((event) => {
+      if (event.kind === 'register') passengers!.outcome(event.handle, { stop: event.stopId, route: event.routeId, outcome: 'cannot-hail', reason: 'stale' });
+    });
+    passengers = served.passengers;
+
+    await post(`${served.base}/register`, JSON.stringify({ handle, stop, route, duration: 30 }));
+    const response = await post(`${served.base}/outcomes`, JSON.stringify({ handle }), new AbortController().signal);
+
+    expect(await readUntil(response.body!.pipeThrough(new TextDecoderStream()).getReader(), replayed)).toBe(
+      'event: outcome\ndata: {"stop":"7177-4660a5ff","route":"30","outcome":"cannot-hail","reason":"stale"}\n\n' + replayed,
+    );
   });
 
   // ADR-032, annotated 05-10-2026: only the last of a handle's open streams submits connection-lost on closing,
@@ -212,9 +272,9 @@ describe('hailServer, HailApi', () => {
     await new Promise((resolve) => setImmediate(resolve));
     expect(applied).toEqual([]);
 
-    // The stream still open keeps receiving its handle's outcomes.
+    // The stream still open keeps receiving its handle's outcomes; the test times out if it never does.
     passengers.outcome(handle, { stop, route, outcome: 'confirmed' });
-    expect((await lastReader.read()).value).toContain('"outcome":"confirmed"');
+    await readUntil(lastReader, '"outcome":"confirmed"');
 
     last.abort();
     await until(() => applied.length > 0);

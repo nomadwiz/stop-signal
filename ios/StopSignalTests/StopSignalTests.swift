@@ -7,7 +7,8 @@ import XCTest
 // Answers every request in place of the network and keeps what it was sent: 200 for the outcome stream, 204 with no
 // body for the other routes, as packages/hail-service/src/server.ts answers. Each outcome stream sends the next of
 // `streams` and ends, as one the network drops does; once they run out, it sends `reply` and stays open, as the
-// service's does.
+// service's does. Each begins with the replay's end, `: replayed`, as the service's does with nothing to replay; a
+// stream that carries its own marker, after the outcomes it replays, is sent as it is.
 final class StubProtocol: URLProtocol, @unchecked Sendable {
     typealias Request = (method: String, url: URL, body: NSDictionary, timeout: TimeInterval)
     // URLSession loads requests on its own threads, several at once while a hail is armed (#58), so the log is locked.
@@ -62,7 +63,9 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         guard streaming else { return client!.urlProtocolDidFinishLoading(self) }
         let next = Self.lock.withLock { Self.queue.isEmpty ? nil : Self.queue.removeFirst() }
-        client?.urlProtocol(self, didLoad: next ?? Self.reply)
+        let sent = next ?? Self.reply
+        let replayed = Data(": replayed\n\n".utf8)
+        client?.urlProtocol(self, didLoad: sent.range(of: replayed) == nil ? replayed + sent : sent)
         if next != nil { client?.urlProtocolDidFinishLoading(self) }
     }
 }

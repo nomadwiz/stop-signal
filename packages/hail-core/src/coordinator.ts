@@ -44,7 +44,7 @@ interface Hail {
   // distance, which the hail waits on without resolving to it (ADR-039, annotated 08-10-2026).
   resolvedTo?: string;
   // The live signal a committed hail is on, by its key in live, and the hail's own deadline there; before it commits,
-  // the deadline of the stale pick it was last shown stale on, if that pick had one (#163).
+  // the deadline of its last moving stale pick, if it had one (#163; ADR-023, the owner's decision 29, #165).
   place?: string;
   deadline?: number | null;
   wake?: { at: number; purpose: Purpose };
