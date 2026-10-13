@@ -2,7 +2,8 @@
 // its hails' Armed states as a second event (#158), on it as server-sent events (ADR-032). The stream's loss is
 // ADR-010's connection loss, so it reaches the loop.
 // #168: each registration's last outcome is kept, an ended hail's included, and re-sent when the handle's stream opens,
-// until the handle registers again at that stop (ADR-032, annotated 13-10-2026). A status is not kept.
+// until the handle registers again at that stop, and `: replayed` follows them (ADR-032, annotated 13-10-2026). A
+// status is not kept.
 import type { ServerResponse } from 'node:http';
 import type { HailEvent } from '../../hail-core/src/events.ts';
 import type { NotificationPort, Outcome } from '../../hail-core/src/notification.ts';
@@ -33,6 +34,9 @@ export function passengerChannel(submit: (event: HailEvent) => void): Notificati
       const open = streams.get(handle) ?? new Set<ServerResponse>();
       streams.set(handle, open.add(res));
       for (const outcome of kept.get(handle)?.values() ?? []) send(res, outcome);
+      // A comment line every SSE client skips: the replay has ended, so the device may register again (the owner's
+      // decision 41 of 13-10-2026). It is sent with nothing to replay too, so silence never stands for an empty replay.
+      res.write(': replayed\n\n');
       // ADR-032, annotated 05-10-2026: only the last open stream's close submits connection-lost. A device that
       // reconnects can hold a new stream before its old one's close arrives, and that passenger is still connected.
       res.on('close', () => {
