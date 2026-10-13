@@ -70,6 +70,7 @@ async function route(req: IncomingMessage, res: ServerResponse, { channel, passe
     const registration = await body(req, res, { handle: uuidV4, stop: nonEmptyString, route: nonEmptyString, duration: wholeSeconds });
     if (registration) {
       const { handle, stop, route, duration } = registration as { handle: string; stop: string; route: string; duration: number };
+      passengers.registered(handle, stop);
       accept({ kind: 'register', handle, stopId: stop, routeId: route, leadTimeS: duration });
     }
     return;

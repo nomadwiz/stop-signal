@@ -196,6 +196,32 @@ describe('hailServer, HailApi', () => {
     expect((await reader.read()).value).toBe('event: status\ndata: {"stop":"7177-4660a5ff","route":"30","status":"stale"}\n\n');
   });
 
+  // #168: an outcome sent while the stream was closed reaches the device when it opens one. Each registration's last
+  // outcome is kept, an ended hail's included, until the handle registers again at that stop (ADR-032, annotated
+  // 13-10-2026).
+  it('re-sends the last outcome of each of the handle\'s registrations when its stream opens, until it registers again at that stop', async () => {
+    const { base, passengers } = await serve();
+    const other = '7178-4660a5ff';
+    passengers.outcome(handle, { stop, route, outcome: 'unacknowledged' });
+    passengers.outcome(handle, { stop, route, outcome: 'cannot-hail', reason: 'stale' });
+    passengers.outcome(handle, { stop: other, route, outcome: 'confirmed' });
+    passengers.outcome('a0000000-0000-4000-8000-000000000000', { stop, route, outcome: 'confirmed' });
+    const read = async (text: string) => {
+      const response = await post(`${base}/outcomes`, JSON.stringify({ handle }), new AbortController().signal);
+      const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
+      let received = '';
+      while (!received.includes(text)) received += (await reader.read()).value;
+      return received;
+    };
+    const otherStop = 'event: outcome\ndata: {"stop":"7178-4660a5ff","route":"30","outcome":"confirmed"}\n\n';
+
+    expect(await read(otherStop)).toBe(
+      'event: outcome\ndata: {"stop":"7177-4660a5ff","route":"30","outcome":"cannot-hail","reason":"stale"}\n\n' + otherStop,
+    );
+    await post(`${base}/register`, JSON.stringify({ handle, stop, route: '70', duration: 30 }));
+    expect(await read(otherStop)).toBe(otherStop);
+  });
+
   // ADR-032, annotated 05-10-2026: only the last of a handle's open streams submits connection-lost on closing,
   // because a device that reconnects can hold a new stream before its old one's close reaches the server.
   it('submits nothing when one of a handle\'s two streams closes, and connection-lost when the last one does', async () => {
