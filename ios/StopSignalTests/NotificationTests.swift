@@ -10,8 +10,9 @@ final class NotificationTests: XCTestCase {
     let melrose = Stop.bundled.first { $0.id == "7177-4660a5ff" }!
     let fixes = FakeFixes()
     var asked = 0
+    var cleared = 0
     var raised: [UNNotificationRequest] = []
-    lazy var model = HailViewModel(api: HailApi(base: URL(string: "https://hail.test")!, handle: "h", session: StubProtocol.session), fixes: fixes, reopen: .milliseconds(50), notifier: Notifier(ask: { [unowned self] in asked += 1 }, raise: { [unowned self] in raised.append($0) }))
+    lazy var model = HailViewModel(api: HailApi(base: URL(string: "https://hail.test")!, handle: "h", session: StubProtocol.session), fixes: fixes, reopen: .milliseconds(50), notifier: Notifier(ask: { [unowned self] in asked += 1 }, raise: { [unowned self] in raised.append($0) }, clear: { [unowned self] in cleared += 1 }))
 
     override func setUpWithError() throws {
         StubProtocol.requests = []
@@ -45,16 +46,19 @@ final class NotificationTests: XCTestCase {
     // #63 acceptance 1 and 3, with the owner's decisions 55 and 56 of 14-10-2026: arming asks to notify, and an outcome
     // arriving on the armed stream raises a notification at once, with OutcomeCard's title and detail and no sound of
     // its own. The same outcome replayed when the stream reopens is not raised again. Whether it shows with the app
-    // backgrounded is a device check: iOS presents none in the foreground (UNUserNotificationCenter.h).
+    // backgrounded is a device check: iOS presents none in the foreground (UNUserNotificationCenter.h). A new hail and
+    // Cancel hail clear it, as they remove the live activity, so it never outlives its hail.
     func testAnOutcomeOnTheArmedStreamRaisesANotificationWithItsTitleAndDetailAndNoSound() async throws {
         let confirmed = Data(#"event: outcome\#ndata: {"stop":"7177-4660a5ff","route":"70-205","outcome":"confirmed"}\#n\#n"#.utf8)
         StubProtocol.streams = [confirmed, confirmed + Data(": replayed\n\n".utf8)]
         fixes.send(10, from: melrose)
         try await model.register(stop: melrose, route: "70-205", duration: 0)
-        XCTAssertEqual(asked, 1)
+        XCTAssertEqual([asked, cleared], [1, 1])
         try await until { StubProtocol.requests.filter { $0.url.path == "/outcomes" }.count == 3 }
 
         XCTAssertEqual(raised.map(shown), [["The driver will stop", "Route 70 to Britomart Via Panmure. Be ready at the front of the stop.", nil, nil]])
+        try await model.cancel()
+        XCTAssertEqual(cleared, 2)
     }
 
     // #63 acceptance 2: the notification is local, so the app is signed without aps-environment, the remote push
@@ -68,8 +72,8 @@ final class NotificationTests: XCTestCase {
 
     // #63 acceptance 4, the owner's decision 46 of 14-10-2026: after Done, a cannot-hail brings Outcome back with its
     // card, which plays its sound and haptic as OutcomeTests checks, and raises a notification that replaces the
-    // earlier one. A confirmed or unacknowledged after Done is neither shown nor raised, and the live activity Done
-    // removed stays removed.
+    // earlier one Done cleared. A confirmed or unacknowledged after Done is neither shown nor raised. Done left the live
+    // activity no screen, and the step from none to an ended screen starts no activity, so it stays removed.
     func testACannotHailAfterDoneBringsOutcomeBackAndRaisesANotification() async throws {
         fixes.send(10, from: melrose)
         try await model.register(stop: melrose, route: "70-205", duration: 0)
@@ -78,7 +82,7 @@ final class NotificationTests: XCTestCase {
         model.done()
         model.receive(ended("unacknowledged"))
         XCTAssertTrue(labels(root).contains { $0.contains(", stop ") })
-        XCTAssertEqual(raised.count, 1)
+        XCTAssertEqual([raised.count, cleared], [1, 2])
 
         model.receive(ended("cannot-hail", reason: "stale"))
         XCTAssertEqual(labels(root).first, "Could not hail. Signal the driver yourself. We couldn't hail the 70: live times for this bus stopped updating. Ask someone at the stop, or raise your hand when you hear a bus.")

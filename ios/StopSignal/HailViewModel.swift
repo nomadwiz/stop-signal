@@ -4,15 +4,17 @@
 import Observation
 import UserNotifications
 
-// The notification centre as the view model uses it: `ask` for permission to show alerts, `raise` a notification. A
-// test passes its own to see what is raised.
+// The notification centre as the view model uses it: `ask` for permission to show alerts, `raise` the outcome's
+// notification, `clear` it once its hail is no longer shown. A test passes its own to see what is raised.
 struct Notifier {
     let ask: @MainActor () -> Void
     let raise: @MainActor (UNNotificationRequest) -> Void
+    let clear: @MainActor () -> Void
 
     static var centre: Notifier {
         Notifier(ask: { UNUserNotificationCenter.current().requestAuthorization(options: .alert) { _, _ in } },
-                 raise: { UNUserNotificationCenter.current().add($0) { _ in } })
+                 raise: { UNUserNotificationCenter.current().add($0) { _ in } },
+                 clear: { UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ["outcome"]) })
     }
 }
 
@@ -118,17 +120,22 @@ final class HailViewModel {
             close()
             throw error
         }
-        // The outcome clears only now, so a failed "Hail the next 70" leaves the passenger on Outcome.
+        // The outcome clears only now, so a failed "Hail the next 70" leaves the passenger on Outcome, with its
+        // notification.
         let registration = Registration(stop: stop, route: route)
         (self.registration, session, outcome) = (registration, registration, nil)
+        notifier.clear()
         listening = Task { await listen(registration, duration) }
     }
 
     // Done leaves Outcome for Stops. It neither cancels the hail nor ends the session, which stays open until a
     // cannot-hail, a departure after a delivered hail or the next arming closes it (ADR-040; the owner's decision 4 of
-    // 14-10-2026). A confirmed or unacknowledged after Done is not shown; a cannot-hail is (`receive`).
+    // 14-10-2026). A confirmed or unacknowledged after Done is not shown; a cannot-hail is (`receive`). Done, Cancel hail
+    // and a new hail clear the outcome's notification, as they remove the live activity (decision 50), so a promise
+    // never outlives its hail.
     func done() {
         registration = nil
+        notifier.clear()
     }
 
     // A failed cancel leaves the hail armed and shows unreachable, with Cancel hail still there.
@@ -144,6 +151,7 @@ final class HailViewModel {
         }
         close()
         (self.registration, session) = (nil, nil)
+        notifier.clear()
     }
 
     // The session stays open through confirmed and unacknowledged, and closes on cancel, on cannot-hail, or on a
