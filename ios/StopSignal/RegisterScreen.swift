@@ -2,7 +2,12 @@
 // "Arm hail for the 70". A stop with several routes asks for the route first; one with a single route goes straight to
 // the check. Lead time stays off Register, and the registration carries duration 0 (ADR-038; the owner's decision of
 // 11-10-2026).
+import os
 import SwiftUI
+
+// B7's second clock (ADR-046): an interval from Register's Arm tap to the Armed screen's onAppear, which SwiftUI calls
+// as it adds Armed, before Armed's first frame is drawn. StopSignalUITests reads it. Outcome's own arming opens none.
+let b7 = OSLog(subsystem: "com.nomadwiz.StopSignal", category: "B7")
 
 struct RegisterScreen: View {
     let stop: Stop
@@ -58,6 +63,7 @@ struct RegisterScreen: View {
     private func arm(_ route: Stop.Route) {
         guard !arming else { return }
         arming = true
+        os_signpost(.begin, log: b7, name: "Arm")
         Task {
             defer { arming = false }
             do { try await model.register(stop: stop, route: route.id, duration: 0) } catch { failed = true }

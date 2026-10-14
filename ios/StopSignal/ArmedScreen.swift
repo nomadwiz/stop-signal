@@ -1,5 +1,6 @@
 // Armed (design-system README §The four screens): ArmedStatus, then MainAction "Cancel hail". It has no back button
 // and no swipe-back; the passenger leaves it only by cancelling or by an outcome (m1-revised.md §5.3; ADR-038).
+import os
 import SwiftUI
 
 // ArmedStatus's six states (components/ArmedStatus/README.md). `left` carries whether a hail was delivered, which
@@ -112,6 +113,7 @@ struct ArmedScreen: View {
         .background(Tokens.color("surface"))
         // Arming is a change into the first state shown, so it plays too.
         .onChange(of: state, initial: true) { play(state.cue, "\(words.title). \(words.detail)") }
+        .onAppear { os_signpost(.end, log: b7, name: "Arm") }
     }
 
     // One cancel per tap. A failed one leaves the model showing unreachable, with Cancel hail still there.
