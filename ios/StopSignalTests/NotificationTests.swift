@@ -27,14 +27,6 @@ final class NotificationTests: XCTestCase {
         try await model.cancel()
     }
 
-    func until(line: UInt = #line, _ done: @escaping () -> Bool) async throws {
-        for _ in 0..<100 {
-            if done() { return }
-            try await Task.sleep(for: .milliseconds(20))
-        }
-        XCTFail("never done", line: line)
-    }
-
     func ended(_ outcome: String, reason: String? = nil) -> Outcome {
         Outcome(stop: melrose.id, route: "70-205", outcome: outcome, reason: reason)
     }
@@ -90,6 +82,4 @@ final class NotificationTests: XCTestCase {
         XCTAssertEqual(raised.last.map(shown), ["Signal the driver yourself", "We couldn't hail the 70: live times for this bus stopped updating. Ask someone at the stop, or raise your hand when you hear a bus.", nil, nil])
         XCTAssertEqual(LiveActivities.step(from: nil, to: model.lockScreen), LiveActivities.Step.none)
     }
-
-    func labels(_ window: UIWindow) -> [String] { elements(window).compactMap(\.accessibilityLabel) }
 }

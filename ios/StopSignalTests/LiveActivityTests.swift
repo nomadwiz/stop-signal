@@ -24,14 +24,6 @@ final class LiveActivityTests: XCTestCase {
         try await model.cancel()
     }
 
-    func until(line: UInt = #line, _ done: @escaping () -> Bool) async throws {
-        for _ in 0..<100 {
-            if done() { return }
-            try await Task.sleep(for: .milliseconds(20))
-        }
-        XCTFail("never done", line: line)
-    }
-
     func status(_ value: String) -> Outcome { Outcome(stop: melrose.id, route: "70-205", status: value) }
 
     func shown(_ title: String, _ detail: String?, _ glyph: String, _ tone: String?, ended: Bool = false) -> LockScreen {

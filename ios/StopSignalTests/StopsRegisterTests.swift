@@ -43,6 +43,17 @@ extension XCTestCase {
     func element(_ elements: [NSObject], _ label: String) -> NSObject {
         elements.first { $0.accessibilityLabel == label }!
     }
+
+    func labels(_ window: UIWindow) -> [String] { elements(window).compactMap(\.accessibilityLabel) }
+
+    // Waits up to 2 s for `done`, and fails if it never comes.
+    func until(line: UInt = #line, _ done: @escaping () -> Bool) async throws {
+        for _ in 0..<100 {
+            if done() { return }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTFail("never done", line: line)
+    }
 }
 
 @MainActor

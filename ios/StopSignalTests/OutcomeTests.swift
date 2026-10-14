@@ -25,14 +25,6 @@ final class OutcomeTests: XCTestCase {
         try await model.cancel()
     }
 
-    func until(line: UInt = #line, _ done: @escaping () -> Bool) async throws {
-        for _ in 0..<100 {
-            if done() { return }
-            try await Task.sleep(for: .milliseconds(20))
-        }
-        XCTFail("never done", line: line)
-    }
-
     func ended(_ outcome: String, reason: String? = nil, next: Double? = nil) -> Outcome {
         Outcome(stop: melrose.id, route: "70-205", outcome: outcome, reason: reason, nextDistanceM: next)
     }
@@ -44,8 +36,6 @@ final class OutcomeTests: XCTestCase {
         model.receive(outcome)
         return host(RootView(model: model))
     }
-
-    func labels(_ window: UIWindow) -> [String] { elements(window).compactMap(\.accessibilityLabel) }
 
     // #62 acceptance 1: with the screen off and VoiceOver on, each outcome has its own sound, haptic and words, and
     // the card reads its tag, title and detail, so no two outcomes sound, feel or read alike.
