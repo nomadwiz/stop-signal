@@ -23,6 +23,8 @@ The passenger app needs Xcode 16 or later, and its tests run on an iPhone simula
 
     xcodebuild test -project ios/StopSignal.xcodeproj -scheme StopSignal -destination 'platform=iOS Simulator,name=iPhone 17'
 
+B7's cold-start times (ADR-046) run by hand from the `StopSignalUITests` scheme, with the hail service running locally; `ios/StopSignalUITests/ColdStartTests.swift` gives the commands.
+
 ## Where files belong
 
 | Path | What goes there |
