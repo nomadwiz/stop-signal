@@ -177,11 +177,10 @@ final class OutcomeTests: XCTestCase {
             XCTAssertFalse(StubProtocol.requests.contains { $0.url.path == "/cancel" })
             // A cannot-hail has already closed the session (ADR-040); Done leaves the others open.
             XCTAssertEqual(fixes.closed, outcome.outcome == "cannot-hail")
-            // A cannot-hail after Done, as a stale feed sends for a committed hail, still closes it (ADR-040), and
-            // the passenger stays on Stops.
+            // A cannot-hail after Done, as a stale feed sends for a committed hail, still closes it (ADR-040); that it
+            // brings Outcome back is NotificationTests' (the owner's decision 46 of 14-10-2026).
             done.receive(ended("cannot-hail", reason: "feed"))
             try await until { fixes.closed }
-            XCTAssertTrue(labels(root).contains { $0.contains(", stop ") })
             // Arming again is what ends the session left open, and cancelling that ends the test's.
             try await done.register(stop: melrose, route: "70-205", duration: 0)
             try await done.cancel()
