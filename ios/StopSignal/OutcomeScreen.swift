@@ -96,8 +96,7 @@ struct OutcomeScreen: View {
     }
 
     var body: some View {
-        let route = registration.stop.routes.first { $0.id == registration.route } ?? Stop.Route(id: registration.route, shortName: registration.route, headsign: registration.route)
-        let words = outcome.words(route: route)
+        let words = outcome.words(route: registration.shown)
         VStack(spacing: 0) {
             ScrollView { OutcomeCard(outcome: outcome, words: words) }
             Spacer(minLength: Tokens.space("space-6"))

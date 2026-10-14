@@ -32,6 +32,6 @@ The passenger app needs Xcode 16 or later, and its tests run on an iPhone simula
 | `packages/console/` | The stand-in driver console |
 | `packages/feed-capture/` | The GTFS-Realtime poller that archives raw snapshots |
 | `packages/replay/` | The replay harness |
-| `ios/` | The passenger app. `ios/StopSignal/tokens.json` is a byte-identical copy of the documents repository's `doc/design/design-system/tokens.json`. `ios/StopSignal/stops.json` is cut from the timetable by `ios/cut-stops.ts` |
+| `ios/` | The passenger app. `ios/StopSignal/tokens.json` is a byte-identical copy of the documents repository's `doc/design/design-system/tokens.json`. `ios/StopSignal/stops.json` is cut from the timetable by `ios/cut-stops.ts`. `ios/StopSignalWidget/` is the widget extension that draws the live activity; it also builds `ios/StopSignal/HailActivity.swift`, `Tokens.swift` and `tokens.json` |
 | `infra/` | Scripts that stand up and check the AWS hosts |
 | `test/` | Guards over the whole repository |
