@@ -31,8 +31,10 @@ struct HailActivityWidget: Widget {
     }
 }
 
-// The route chip, the title over the detail, then the glyph where the design system's minutes were. VoiceOver reads
-// the route, title and detail as one element.
+// The route chip, then the title over the detail. An outcome, which has no detail, adds its solid glyph where the
+// design system's minutes were (decision 49); a live state draws nothing there, as LiveActivity does for no minutes,
+// and shows its glyph only in the Dynamic Island's compact views. VoiceOver reads the route, title and detail as one
+// element.
 struct HailActivityView: View {
     let route: String
     let state: HailActivity.ContentState
@@ -47,7 +49,7 @@ struct HailActivityView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            Glyph(state: state).font(.title2)
+            if state.detail == nil { Glyph(state: state).font(.title2) }
         }
         .accessibilityElement(children: .combine)
     }
