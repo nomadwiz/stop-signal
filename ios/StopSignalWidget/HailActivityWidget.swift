@@ -15,7 +15,6 @@ struct HailActivityWidget: Widget {
             HailActivityView(route: context.attributes.route, state: context.state)
                 .padding(Tokens.space("space-4"))
                 .activityBackgroundTint(HailActivity.color(HailActivity.background))
-                .activitySystemActionForegroundColor(HailActivity.color(HailActivity.text))
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.bottom) {
