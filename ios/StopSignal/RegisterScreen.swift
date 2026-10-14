@@ -6,8 +6,7 @@ import os
 import SwiftUI
 
 // B7's second clock (ADR-046): an interval from Register's Arm tap to the Armed screen's onAppear, which SwiftUI calls
-// as it adds Armed, before Armed's first frame is drawn. StopSignalUITests reads it. A failed Register
-// closes it too, so Try again opens a fresh one; Outcome's own arming opens none.
+// as it adds Armed, before Armed's first frame is drawn. StopSignalUITests reads it. Outcome's own arming opens none.
 let b7 = OSLog(subsystem: "com.nomadwiz.StopSignal", category: "B7")
 
 struct RegisterScreen: View {
@@ -67,10 +66,7 @@ struct RegisterScreen: View {
         os_signpost(.begin, log: b7, name: "Arm")
         Task {
             defer { arming = false }
-            do { try await model.register(stop: stop, route: route.id, duration: 0) } catch {
-                os_signpost(.end, log: b7, name: "Arm")
-                failed = true
-            }
+            do { try await model.register(stop: stop, route: route.id, duration: 0) } catch { failed = true }
         }
     }
 }
