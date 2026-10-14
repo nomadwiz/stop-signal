@@ -8,6 +8,7 @@
 import CoreLocation
 import XCTest
 
+@MainActor
 final class ColdStartTests: XCTestCase {
     // Onehunga Station, stop 1039, whose one route takes Register straight to its Arm button.
     private let stop = CLLocation(latitude: -36.92543, longitude: 174.78576)
@@ -33,6 +34,8 @@ final class ColdStartTests: XCTestCase {
         app.launch()
         let allow = XCUIApplication(bundleIdentifier: "com.apple.springboard").buttons["Allow While Using App"]
         if allow.waitForExistence(timeout: 10) { allow.tap() }
+        // Arming asks to show notifications (#63) the first time, and that alert would block Cancel hail.
+        addUIInterruptionMonitor(withDescription: "Notifications") { $0.buttons["Allow"].tap(); return true }
         let arm = app.buttons["Arm hail for the 309"]
         measure(metrics: [XCTOSSignpostMetric(subsystem: "com.nomadwiz.StopSignal", category: "B7", name: "Arm")], options: tenRuns) {
             app.launch()
