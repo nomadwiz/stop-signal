@@ -25,22 +25,11 @@ final class ArmedTests: XCTestCase {
         try await model.cancel()
     }
 
-    // Waits up to 2 s for `done`, and fails if it never comes.
-    func until(line: UInt = #line, _ done: @escaping () -> Bool) async throws {
-        for _ in 0..<100 {
-            if done() { return }
-            try await Task.sleep(for: .milliseconds(20))
-        }
-        XCTFail("never done", line: line)
-    }
-
     func event(_ key: String, _ value: String) -> String {
         "event: \(key)\ndata: {\"stop\":\"7177-4660a5ff\",\"route\":\"70-205\",\"\(key)\":\"\(value)\"}\n\n"
     }
 
     func status(_ value: String) -> Outcome { Outcome(stop: melrose.id, route: "70-205", status: value) }
-
-    func labels(_ window: UIWindow) -> [String] { elements(window).compactMap(\.accessibilityLabel) }
 
     // #55 acceptance 1: Armed has no back button and no other control, and is left only by Cancel hail or an outcome.
     func testTheScreenIsLeftOnlyByCancelHailOrAnOutcome() async throws {

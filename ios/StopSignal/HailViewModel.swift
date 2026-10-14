@@ -2,6 +2,25 @@
 // cancel intents, and the armed session that senses presence at the stop (S12). It holds no hail state of its own;
 // the service's coordinator does, and says so through the outcome stream. The screens (#54, #55, #62) bind to it.
 import Observation
+import UserNotifications
+
+// The notification centre as the view model uses it: `ask` for permission to show alerts, `raise` the outcome's
+// notification, `clear` it once its hail is no longer shown. A test passes its own to see what is raised.
+struct Notifier {
+    let ask: @MainActor () -> Void
+    let raise: @MainActor (UNNotificationRequest) -> Void
+    let clear: @MainActor () -> Void
+
+    static var centre: Notifier {
+        Notifier(ask: { UNUserNotificationCenter.current().requestAuthorization(options: .alert) { _, _ in } },
+                 raise: { UNUserNotificationCenter.current().add($0) { _ in } },
+                 // Pending as well as delivered, so an outcome still being added when its hail ends never appears.
+                 clear: {
+                     UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["outcome"])
+                     UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ["outcome"])
+                 })
+    }
+}
 
 @MainActor
 @Observable
@@ -43,6 +62,7 @@ final class HailViewModel {
     private let fixes: Fixes
     private let wait: Duration
     private let reopen: Duration
+    private let notifier: Notifier
 
     // ponytail: an assumption, not a measured time. How long arming waits for a first decisive fix before Register
     // goes ahead without one (the owner's decision of 12-10-2026). Measure a cold fix on a device to set it.
@@ -51,11 +71,12 @@ final class HailViewModel {
     // ponytail: a fixed wait between attempts to reopen a closed stream; back off if a device shows it costs battery.
     static let reopenWait = Duration.seconds(5)
 
-    init(api: HailApi, fixes: Fixes, wait: Duration = firstFixWait, reopen: Duration = reopenWait) {
+    init(api: HailApi, fixes: Fixes, wait: Duration = firstFixWait, reopen: Duration = reopenWait, notifier: Notifier = .centre) {
         self.api = api
         self.fixes = fixes
         self.wait = wait
         self.reopen = reopen
+        self.notifier = notifier
     }
 
     // What ArmedStatus shows (ADR-038). Unreachable outranks the rest, because nothing else holds while StopSignal
@@ -81,6 +102,8 @@ final class HailViewModel {
     // Its first decisive fix is reported before Register, so a hail never commits on an arrival the service holds from
     // an earlier session (ADR-045 decision 5). Arming replaces any session before it.
     func register(stop: Stop, route: String, duration: Int) async throws {
+        // Permission to notify is asked while the passenger arms, in the foreground, where iOS can show the prompt.
+        notifier.ask()
         close()
         (present, delivered, status, withdrawing) = (nil, false, "waiting", false)
         let opened = fixes.open()
@@ -101,17 +124,22 @@ final class HailViewModel {
             close()
             throw error
         }
-        // The outcome clears only now, so a failed "Hail the next 70" leaves the passenger on Outcome.
+        // The outcome clears only now, so a failed "Hail the next 70" leaves the passenger on Outcome, with its
+        // notification.
         let registration = Registration(stop: stop, route: route)
         (self.registration, session, outcome) = (registration, registration, nil)
+        notifier.clear()
         listening = Task { await listen(registration, duration) }
     }
 
     // Done leaves Outcome for Stops. It neither cancels the hail nor ends the session, which stays open until a
     // cannot-hail, a departure after a delivered hail or the next arming closes it (ADR-040; the owner's decision 4 of
-    // 14-10-2026). An outcome after Done is not shown.
+    // 14-10-2026). A confirmed or unacknowledged after Done is not shown; a cannot-hail is (`receive`). Done, Cancel hail
+    // and a new hail clear the outcome's notification, as they remove the live activity (decision 50), so a promise
+    // never outlives its hail.
     func done() {
         registration = nil
+        notifier.clear()
     }
 
     // A failed cancel leaves the hail armed and shows unreachable, with Cancel hail still there.
@@ -127,6 +155,7 @@ final class HailViewModel {
         }
         close()
         (self.registration, session) = (nil, nil)
+        notifier.clear()
     }
 
     // The session stays open through confirmed and unacknowledged, and closes on cancel, on cannot-hail, or on a
@@ -204,10 +233,29 @@ final class HailViewModel {
             delivered = true
         }
         if let status = event.status { self.status = status }
-        if event.outcome != nil { outcome = event }
+        if event.outcome != nil {
+            // A cannot-hail after Done withdraws a promise the passenger may still rely on, so Outcome returns (the
+            // owner's decision 46 of 14-10-2026).
+            if event.outcome == "cannot-hail", registration == nil { registration = session }
+            if let registration, event != outcome { raise(event, registration) }
+            outcome = event
+        }
         // ponytail: a hail delivered just before a departure reached the service was spent by it, but `sent` can
         // arrive after this device left, and the session then stays open until cancel. Closing here instead could
         // cancel that presence-end in flight.
         if event.outcome == "cannot-hail" { close() }
+    }
+
+    // The outcome shown, as a notification raised at once (#63; ADR-009). It is raised only when the outcome changes, so
+    // a replay of the outcome already shown raises none. iOS presents none while the app is in the foreground, which
+    // has no `willPresent` delegate (UNUserNotificationCenter.h), so Outcome alone shows it there. The title and body
+    // are OutcomeCard's title and detail, and it sets no sound: the outcome's sound and haptic are the ones
+    // `Signals.play` makes (the owner's decisions 55 and 56 of 14-10-2026). One identifier for every outcome, so a later
+    // one replaces the earlier in Notification Centre and two outcomes are never shown at once.
+    private func raise(_ event: Outcome, _ registration: Registration) {
+        let words = event.words(route: registration.shown)
+        let content = UNMutableNotificationContent()
+        (content.title, content.body) = (words.title, words.detail)
+        notifier.raise(UNNotificationRequest(identifier: "outcome", content: content, trigger: nil))
     }
 }
