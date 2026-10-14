@@ -42,12 +42,6 @@ final class PresenceTests: XCTestCase {
         try await model.cancel()
     }
 
-    // Waits up to 2 s for `done`, and fails if it never comes.
-    func until(line: UInt = #line, _ done: @escaping () -> Bool) async throws {
-        for _ in 0..<100 where !done() { try await Task.sleep(for: .milliseconds(20)) }
-        XCTAssertTrue(done(), line: line)
-    }
-
     var presence: [String] {
         StubProtocol.requests.map(\.url.path).filter { $0.hasPrefix("/presence") }
     }
