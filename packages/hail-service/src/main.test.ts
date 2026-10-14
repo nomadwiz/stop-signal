@@ -45,7 +45,9 @@ it('loads the service day from GTFS_ZIP before it listens', async () => {
   service = spawn(process.execPath, ['packages/hail-service/src/main.ts'], { env: { ...env, GTFS_ZIP: 'packages/hail-service/fixtures/gtfs.zip' } });
   let stderr = '';
   service.stderr!.on('data', (chunk) => (stderr += chunk));
-  while (!/listening on/.test(stderr)) await once(service.stderr!, 'data');
+  const exited = once(service, 'exit').then(([code]) => Promise.reject(new Error(`main.ts exited with ${code}: ${stderr}`)));
+  while (!/listening on/.test(stderr)) await Promise.race([once(service.stderr!, 'data'), exited]);
+  exited.catch(() => {}); // afterEach's kill ends it, which is no failure.
 
   // The fixture's stops.txt holds 3 stops, whatever the day.
   expect(stderr).toMatch(/^timetable packages\/hail-service\/fixtures\/gtfs\.zip: service day \d{8}, \d+ trips, 3 stops\n/);

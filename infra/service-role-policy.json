@@ -3,13 +3,10 @@
   "Statement": [
     { "Sid": "DeployRead", "Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::BUCKET/deploy/service/*" },
     {
-      "Sid": "Parameters",
+      "Sid": "ConsoleHash",
       "Effect": "Allow",
       "Action": "ssm:GetParameter",
-      "Resource": [
-        "arn:aws:ssm:ap-southeast-2:ACCOUNT:parameter/stopsignal/at-key",
-        "arn:aws:ssm:ap-southeast-2:ACCOUNT:parameter/stopsignal/console-hash"
-      ]
+      "Resource": "arn:aws:ssm:ap-southeast-2:ACCOUNT:parameter/stopsignal/console-hash"
     },
     { "Sid": "AgentHeartbeat", "Effect": "Allow", "Action": "ssm:UpdateInstanceInformation", "Resource": "*" },
     {

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Checks the hail service's host against #50's acceptance: HTTPS reaches the service, basic_auth guards the
 # console and nothing else, the timetable loaded, each run writes a decision log of its own, the instance's role
-# reaches only its own prefix and parameters, and a silent stream stays open for 10 minutes. Exits non-zero on the
+# reaches only its own prefix and parameter, and a silent stream stays open for 10 minutes. Exits non-zero on the
 # first failure. It restarts the service once, which ends every live hail, and takes about 11 minutes.
 #
 # Usage: CONSOLE_PASSWORD="$(pbpaste)" infra/check-service-host.sh

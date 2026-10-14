@@ -36,6 +36,30 @@ jobs:
       - run: npm test
       - run: npm run replay:check
 
+  # Packs the hail service in a job of its own, since npm ci's install scripts and the console's build run
+  # here: a step can reach later steps of its job through $GITHUB_PATH, $GITHUB_ENV or a process left running,
+  # so none of this may share a job with the deploy key. deploy takes only the archive.
+  pack:
+    needs: suite
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          check-latest: true
+          cache: npm
+      - run: npm ci
+      - run: infra/service-pack.sh "$RUNNER_TEMP/service.tgz"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: service
+          path: ${{ runner.temp }}/service.tgz
+          retention-days: 1
+
   # Uploads capture.ts to S3 and has the host put it in place, restarting capture only if it changed
   # (infra/capture-update.sh). Uploads the hail service's archive, keeping the timetable beside it, and has a
   # running service host install them the same way (infra/service-update.sh); a stopped one is left alone, and
@@ -44,7 +68,7 @@ jobs:
   # environment, whose branch policy admits master alone, so a workflow run on any other branch cannot read it.
   # The account's AWS-managed service control policy denies the OpenID Connect provider a keyless sign-in would need.
   deploy:
-    needs: suite
+    needs: pack
     if: github.ref == 'refs/heads/master'
     environment: deploy
     runs-on: ubuntu-latest
@@ -58,17 +82,13 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          node-version: 22
-          check-latest: true
-          cache: npm
+          name: service
+          path: ${{ runner.temp }}
 
-      # Packed before the key is set, so no package script or build tool ever runs beside it.
-      - run: npm ci
-      - run: infra/service-pack.sh "$RUNNER_TEMP/service.tgz"
-
-      # The key is set on this step alone. A step cannot read a later step's env, so nothing above holds it.
+      # The key is set on this step alone. actions/checkout and the download run before it, and a step cannot
+      # read a later step's env, so neither holds the key. No npm code runs in this job.
       - name: Deploy capture.ts and the hail service
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
