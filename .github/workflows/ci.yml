@@ -88,7 +88,11 @@ jobs:
           on_host "$(sed "s/BUCKET/$bucket/g" infra/capture-update.sh)"
 
           infra/service-upload.sh "$bucket" "$RUNNER_TEMP/service.tgz"
-          if INSTANCE=stopsignal-service . infra/on-host.sh; then
+          # An assignment, so set -e fails the job if AWS does not answer, rather than taking the host as stopped.
+          running=$(aws ec2 describe-instances --filters Name=tag:Name,Values=stopsignal-service Name=instance-state-name,Values=running \
+            --query 'Reservations[].Instances[].InstanceId' --output text)
+          if [ -n "$running" ]; then
+            INSTANCE=stopsignal-service . infra/on-host.sh
             on_host "$(sed "s/BUCKET/$bucket/g" infra/service-update.sh)"
           else
             echo "the service host is stopped; infra/service-host.sh installs this build when it next starts it"

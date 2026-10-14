@@ -12,7 +12,9 @@
 #     aws ssm put-parameter --name /stopsignal/console-hash --type SecureString --overwrite --profile stopsignal \
 #       --value "$(pbpaste | htpasswd -niB -C 12 console | cut -d: -f2-)"
 #
-#   Safe to re-run: it creates only what is missing and launches an instance only if none exists. A stopped
+#   Safe to re-run: it creates only what is missing and launches an instance only if none exists. The instance
+#   carries the hash of the boot script it ran, which runs only at its first boot, so after a change to
+#   infra/service-host-boot.sh it stops and asks for the instance to be terminated and launched again. A stopped
 #   instance is started, which opens a field-test window: the service runs only for those (ADR-044). Close one
 #   with the stop command it prints. Then run infra/check-service-host.sh.
 set -euo pipefail
@@ -21,6 +23,7 @@ ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
 BUCKET=stopsignal-archive-$ACCOUNT
 NAME=stopsignal-service
 HERE=$(dirname "$0")
+BOOT=$(shasum -a 256 < "$HERE/service-host-boot.sh" | cut -c1-12)
 
 aws ssm get-parameter --name /stopsignal/console-hash >/dev/null \
   || { echo "FAIL: store the console's password hash at /stopsignal/console-hash first; see this script's usage" >&2; exit 1; }
@@ -68,10 +71,12 @@ if [ -z "$ID" ]; then
     --metadata-options HttpTokens=required \
     --credit-specification CpuCredits=standard \
     --user-data "$(sed "s/SSLIP_NAME/$SITE/g" "$HERE/service-host-boot.sh")" \
-    --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$NAME}]" \
+    --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$NAME},{Key=Boot,Value=$BOOT}]" \
     --query 'Instances[0].InstanceId' --output text)
   echo "launched $ID; first boot takes a few minutes"
 else
+  [ "$(aws ec2 describe-instances --instance-ids "$ID" --query "Reservations[0].Instances[0].Tags[?Key=='Boot'].Value | [0]" --output text)" = "$BOOT" ] \
+    || { echo "FAIL: $ID ran another infra/service-host-boot.sh; terminate it (aws ec2 terminate-instances --instance-ids $ID), then re-run" >&2; exit 1; }
   case $(aws ec2 describe-instances --instance-ids "$ID" --query 'Reservations[0].Instances[0].State.Name' --output text) in
     stopping|stopped)
       aws ec2 wait instance-stopped --instance-ids "$ID"
@@ -91,7 +96,7 @@ done
 INSTANCE=$NAME . "$HERE/on-host.sh"
 # on_host waits about 100 s for a command, and a first boot's set-up can take longer, so ask again until it is done.
 for _ in $(seq 1 10); do on_host 'cloud-init status --wait' >/dev/null 2>&1 && break; done
-on_host 'cloud-init status' | grep -q done || { echo "FAIL: the host's first-boot set-up did not finish; read /var/log/cloud-init-output.log on $ID" >&2; exit 1; }
+on_host 'cloud-init status || true' | grep -q 'status: done' || { echo "FAIL: the host's first-boot set-up did not finish; read /var/log/cloud-init-output.log on $ID" >&2; exit 1; }
 on_host "$(sed "s/BUCKET/$BUCKET/g" "$HERE/service-update.sh")"
 echo "hail service: $ID at https://$SITE/"
 echo "close the window: aws ec2 stop-instances --instance-ids $ID --profile stopsignal --region $AWS_REGION"

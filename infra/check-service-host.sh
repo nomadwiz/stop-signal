@@ -25,11 +25,8 @@ pass "instance $ID is running at $URL"
 # Prints the status code of one request; curl checks the certificate. With AUTH set, it sends the console's
 # credentials through a config read from standard input.
 code() {
-  if [ -n "${AUTH:-}" ]; then
-    printf 'user = "console:%s"\n' "$CONSOLE_PASSWORD" | curl -s -o /dev/null -w '%{http_code}' --max-time 5 -K - "$@" || true
-  else
-    curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$@" || true
-  fi
+  { [ -z "${AUTH:-}" ] || printf 'user = "console:%s"\n' "$CONSOLE_PASSWORD"; } \
+    | curl -s -o /dev/null -w '%{http_code}' --max-time 5 -K - "$@" || true
 }
 empty_register() { code -X POST -H 'content-type: application/json' -d '{}' "$URL/register"; }
 

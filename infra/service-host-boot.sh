@@ -47,6 +47,11 @@ chmod 755 /opt/stopsignal/*.sh
 # request, which keeps the handle out of any access log (ADR-032 decision 5). With port 80 closed, the
 # certificate comes by the TLS-ALPN challenge on 443.
 cat > /etc/caddy/Caddyfile <<'EOF'
+# No admin endpoint: a change of config goes through a restart, so no local process can change it unseen.
+{
+	admin off
+}
+
 SSLIP_NAME {
 	@console path / /index.html /assets/* /signals /ack
 	basic_auth @console {

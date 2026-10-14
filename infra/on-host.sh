@@ -1,12 +1,11 @@
 # Sourced, not run, by the infra/ scripts and the deploy job that act on a host: sets ID to the running
-# instance tagged INSTANCE, by default stopsignal-capture, and defines on_host. With no such instance it
-# returns 1, which ends a caller under set -e and lets one that tests it go on.
+# instance tagged INSTANCE, by default stopsignal-capture, or exits, and defines on_host.
 #
 # Usage: [INSTANCE=stopsignal-service] . infra/on-host.sh   (with AWS_REGION and credentials already set)
 
 ID=$(aws ec2 describe-instances --filters Name=tag:Name,Values="${INSTANCE:-stopsignal-capture}" Name=instance-state-name,Values=running \
   --query 'Reservations[].Instances[].InstanceId' --output text)
-[ -n "$ID" ] || { echo "no running instance tagged ${INSTANCE:-stopsignal-capture}" >&2; return 1; }
+[ -n "$ID" ] || { echo "FAIL: no running instance tagged ${INSTANCE:-stopsignal-capture}" >&2; exit 1; }
 
 # Runs a shell command on the instance through Systems Manager and prints its output and errors;
 # fails if the command fails.
