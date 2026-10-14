@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Checks the hail service's host against #50's acceptance: HTTPS reaches the service, basic_auth guards the
 # console and nothing else, the timetable loaded, each run writes a decision log of its own, the instance's role
-# reaches only its own prefix and parameter, and a silent stream stays open for 10 minutes. Exits non-zero on the
+# reaches only its own prefix and parameters, a silent stream stays open for 10 minutes, and the service polled
+# Auckland Transport's feed with AT_KEY for those 10 minutes without a failed poll. Exits non-zero on the
 # first failure. It restarts the service once, which ends every live hail, and takes about 11 minutes.
 #
 # Usage: CONSOLE_PASSWORD="$(pbpaste)" infra/check-service-host.sh
@@ -90,3 +91,12 @@ grep -q '^: replayed$' "$T/outcomes" || fail "/outcomes never sent its ': replay
 rc=0; wait $signals || rc=$?
 [ $rc = 28 ] || fail "/signals closed before 610 s, with curl status $rc: $(cat "$T/signals")"
 pass "/outcomes and /signals each stayed open for 610 s with nothing sent"
+
+# The service polls every 20 s once AT_KEY is set (ADR-044), and each poll either submits a tick or logs
+# "feed poll: …, no tick". So a run with the key and no such line has ticked about 30 times over the 610 s above.
+pid='$(systemctl show -p MainPID --value stopsignal-service)'
+[ "$(lines "tr '\\0' '\\n' < /proc/$pid/environ | grep -c '^AT_KEY=.'")" = 1 ] || fail "the service runs without AT_KEY"
+run='_SYSTEMD_INVOCATION_ID=$(systemctl show -p InvocationID --value stopsignal-service)'
+failed=$(lines "journalctl -u stopsignal-service $run --no-pager -o cat | grep -c '^feed poll:' || true") || fail "cannot read the service's journal"
+[ "$failed" = 0 ] || fail "$failed feed polls failed: $(lines "journalctl -u stopsignal-service $run --no-pager -o cat | grep '^feed poll:' | tail -1")"
+pass "the service ran with AT_KEY, and every feed poll since its restart submitted a tick"

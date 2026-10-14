@@ -23,9 +23,15 @@ install -d /opt/stopsignal /etc/caddy
 
 # Each run writes its decisions to a file of its own, named by the epoch-ms it starts at, so a restart, which
 # starts seq again at 1, never repeats a seq within a file (ADR-017, decided 11-10-2026). Standard error, the
-# banner and the timetable line, goes to the journal.
+# banner and the timetable line, goes to the journal. The Auckland Transport key is read at every start, as
+# capture's is, so starting the instance opens a field-test window in which the service polls the feed (ADR-044
+# decision 2, annotated by the owner's decision 53).
 cat > /opt/stopsignal/run-service.sh <<EOF
 #!/bin/sh
+# set -e stops here if the key cannot be read, so the journal shows the AWS error.
+set -e
+AT_KEY=\$(aws ssm get-parameter --region $AWS_REGION --name /stopsignal/at-key --with-decryption --query Parameter.Value --output text)
+export AT_KEY
 export GTFS_ZIP=/opt/stopsignal/service/gtfs.zip PORT=8080
 exec $NODE /opt/stopsignal/service/packages/hail-service/src/main.ts > /var/lib/stopsignal/decisions/\$(date +%s%3N).jsonl
 EOF
