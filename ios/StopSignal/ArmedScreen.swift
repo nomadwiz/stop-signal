@@ -98,8 +98,7 @@ struct ArmedScreen: View {
 
     var body: some View {
         let state = model.armed
-        let route = registration.stop.routes.first { $0.id == registration.route }?.shortName ?? registration.route
-        let words = state.words(route: route, stop: registration.stop.code)
+        let words = state.words(route: registration.shown.shortName, stop: registration.stop.code)
         VStack(spacing: 0) {
             ScrollView { ArmedStatus(state: state, words: words) }
             Spacer(minLength: Tokens.space("space-6"))

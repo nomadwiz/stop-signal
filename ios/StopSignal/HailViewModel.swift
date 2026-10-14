@@ -9,6 +9,9 @@ final class HailViewModel {
     struct Registration: Equatable {
         let stop: Stop
         let route: String
+
+        // The route as the stop lists it, or its id alone where the stop does not list it.
+        var shown: Stop.Route { stop.routes.first { $0.id == route } ?? Stop.Route(id: route, shortName: route, headsign: route) }
     }
 
     private(set) var registration: Registration?
@@ -71,7 +74,7 @@ final class HailViewModel {
 
     // The hail shown is live: waiting, sent, moved, stale, or left with nothing delivered, and no outcome (ADR-038,
     // annotated 11-10-2026 and 12-10-2026).
-    private var live: Bool { outcome == nil && !(present == false && delivered) }
+    var live: Bool { outcome == nil && !(present == false && delivered) }
 
     // The session opens before the registration's round trip, while the passenger is still tapping Arm, because only
     // a session made in the foreground becomes active (CLBackgroundActivitySession.h; ADR-009, annotated 02-10-2026).

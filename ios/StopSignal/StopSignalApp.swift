@@ -3,8 +3,14 @@ import SwiftUI
 
 @main
 struct StopSignalApp: App {
-    // ponytail: the service's address until #50 deploys it over HTTPS.
-    @State private var model = HailViewModel(api: HailApi(base: URL(string: "http://localhost:8080")!, handle: Handle.current()), fixes: DeviceFixes())
+    @State private var model: HailViewModel
+
+    init() {
+        // ponytail: the service's address until #50 deploys it over HTTPS.
+        let model = HailViewModel(api: HailApi(base: URL(string: "http://localhost:8080")!, handle: Handle.current()), fixes: DeviceFixes())
+        _model = State(initialValue: model)
+        LiveActivities.follow(model)
+    }
 
     var body: some Scene {
         WindowGroup { RootView(model: model) }
