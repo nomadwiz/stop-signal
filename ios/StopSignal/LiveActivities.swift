@@ -74,23 +74,37 @@ enum LiveActivities {
         }
     }
 
-    private static func show(_ screen: LockScreen?, after previous: LockScreen?) async {
-        guard screen != previous else { return }
-        guard let screen else { return await removeAll() }
-        let content = ActivityContent(state: screen.state, staleDate: nil)
-        if previous?.ended == false {
-            if screen.ended { await current?.end(content, dismissalPolicy: .default) } else { await current?.update(content) }
-            return
-        }
-        // A new hail, after none or after an ended one, which goes at once. A request is made in the foreground, where
-        // arming is; one the system refuses, as when Live Activities are off, leaves the hail without an activity.
-        await removeAll()
-        guard !screen.ended else { return }
-        current = try? Activity.request(attributes: HailActivity(route: screen.route), content: content)
+    // What a change of the lock screen does to the activity (the owner's decision 50 of 14-10-2026). No hail shown
+    // removes it at once. A new hail, after none or after an ended one, removes what is left and requests a new
+    // activity. A live hail updates it. An ended hail ends it with the default dismissal, and a later end, such as an
+    // outcome after "Hail finished" or a cannot-hail after unacknowledged, ends it again with the newer words.
+    enum Step: Equatable { case none, remove, request, update, end }
+
+    static func step(from previous: LockScreen?, to screen: LockScreen?) -> Step {
+        guard screen != previous else { return .none }
+        guard let screen else { return .remove }
+        guard let previous else { return screen.ended ? .none : .request }
+        if screen.ended { return .end }
+        return previous.ended ? .request : .update
     }
 
-    // ponytail: ending an activity that has already ended, to remove it at once, is not shown by ActivityKit's
-    // documentation; Done after an outcome relies on it. A device check confirms it.
+    // A request is made in the foreground, where arming is; one the system refuses, as when Live Activities are off,
+    // leaves the hail without an activity.
+    private static func show(_ screen: LockScreen?, after previous: LockScreen?) async {
+        let step = step(from: previous, to: screen)
+        if step == .remove || step == .request { await removeAll() }
+        guard let screen else { return }
+        let content = ActivityContent(state: screen.state, staleDate: nil)
+        switch step {
+        case .request: current = try? Activity.request(attributes: HailActivity(route: screen.route), content: content)
+        case .update: await current?.update(content)
+        case .end: await current?.end(content, dismissalPolicy: .default)
+        case .none, .remove: break
+        }
+    }
+
+    // ponytail: ending an activity that has already ended, to remove it at once or to change its words, is not shown
+    // by ActivityKit's documentation; Done after an outcome and a later outcome rely on it. A device check confirms it.
     private static func removeAll() async {
         await current?.end(nil, dismissalPolicy: .immediate)
         for activity in Activity<HailActivity>.activities where activity.id != current?.id {

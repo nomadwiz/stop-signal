@@ -1,6 +1,6 @@
 // One test per acceptance item of #56, the live activity, that a simulator can prove. The activity is read from
-// HailViewModel.lockScreen, which LiveActivities hands to ActivityKit as it changes; the device checks are in the pull
-// request.
+// HailViewModel.lockScreen, and what each change does to it from LiveActivities.step, which LiveActivities carries out
+// through ActivityKit; the device checks are in the pull request.
 import XCTest
 @testable import StopSignal
 
@@ -40,7 +40,7 @@ final class LiveActivityTests: XCTestCase {
     // #56 acceptance 3, with the owner's decision 48 of 14-10-2026: LiveActivity's words for each state, which carry no
     // minutes; stale, unreachable and left lead with what to do; after a delivered hail, left reads "Hail finished"
     // and ends the activity (decision 50). The glyph and tone are StatusGlyph's, for the Dynamic Island (decision 51).
-    // Cancel hail removes the activity at once.
+    // Each state updates the activity, "Hail finished" ends it, and Cancel hail removes it at once.
     func testTheActivityShowsLiveActivitysWordsForEachStateAndHailFinishedAfterADeliveredHail() async throws {
         fixes.send(10, from: melrose)
         try await model.register(stop: melrose, route: "70-205", duration: 0)
@@ -74,13 +74,17 @@ final class LiveActivityTests: XCTestCase {
             shown("Hail finished", "If you're not on the bus, arm a new hail", "figure.walk.departure", nil, ended: true),
         ])
 
+        XCTAssertEqual(zip([nil] + seen, seen).map(LiveActivities.step), [.request, .update, .update, .update, .update, .update, .end])
+
         try await model.cancel()
         XCTAssertNil(model.lockScreen)
+        XCTAssertEqual(LiveActivities.step(from: seen.last!, to: nil), .remove)
     }
 
     // #56 acceptance 4, with the owner's decisions 49 and 50 of 14-10-2026: an outcome ends the activity showing
-    // OutcomeCard's title and the outcome's solid glyph, with no detail, and Done then removes it at once. Its sound is
-    // the Outcome screen's, which OutcomeTests checks; the activity sets no alert of its own.
+    // OutcomeCard's title and the outcome's solid glyph, with no detail, and Done then removes it at once. A later
+    // outcome ends it again with its own title, and arming the next bus from Outcome starts a new activity. The sound
+    // is the Outcome screen's, which OutcomeTests checks; the activity sets no alert of its own.
     func testAnOutcomeEndsTheActivityWithItsTitleAndSolidGlyphAndDoneRemovesIt() async throws {
         let ends = [
             ("confirmed", shown("The driver will stop", nil, "checkmark.circle.fill", "confirmed", ended: true)),
@@ -90,11 +94,26 @@ final class LiveActivityTests: XCTestCase {
         for (outcome, end) in ends {
             fixes.send(10, from: melrose)
             try await model.register(stop: melrose, route: "70-205", duration: 0)
+            let armed = model.lockScreen
             model.receive(Outcome(stop: melrose.id, route: "70-205", outcome: outcome, reason: "feed"))
             XCTAssertEqual(model.lockScreen, end)
+            XCTAssertEqual(LiveActivities.step(from: armed, to: end), .end)
             model.done()
             XCTAssertNil(model.lockScreen)
+            XCTAssertEqual(LiveActivities.step(from: end, to: nil), .remove)
         }
+
+        fixes.send(10, from: melrose)
+        try await model.register(stop: melrose, route: "70-205", duration: 0)
+        model.receive(Outcome(stop: melrose.id, route: "70-205", outcome: "unacknowledged"))
+        let first = model.lockScreen
+        model.receive(Outcome(stop: melrose.id, route: "70-205", outcome: "cannot-hail", reason: "deadline"))
+        let later = shown("Signal this bus yourself", nil, "xmark.octagon.fill", "cannot-hail", ended: true)
+        XCTAssertEqual(model.lockScreen, later)
+        XCTAssertEqual(LiveActivities.step(from: first, to: later), .end)
+        fixes.send(10, from: melrose)
+        try await model.register(stop: melrose, route: "70-205", duration: 0)
+        XCTAssertEqual(LiveActivities.step(from: later, to: model.lockScreen), .request)
     }
 
     // #56 acceptance 5: the secondary text's contrast on the activity's fixed background, by WCAG 2.2's formula. It is
