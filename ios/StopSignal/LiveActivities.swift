@@ -103,9 +103,10 @@ enum LiveActivities {
         }
     }
 
-    // ponytail: ending an activity that has already ended, to remove it at once or to change its words, is not shown
-    // by ActivityKit's documentation; Done after an outcome and a later outcome rely on it. A device check confirms it.
-    private static func removeAll() async {
+    // Ending an activity that has already ended removes it at once, which Done after an outcome relies on;
+    // LiveActivityTests shows it in the simulator. ponytail: ending one again with a later outcome's words is not shown
+    // by ActivityKit's documentation; a device check confirms the words change.
+    static func removeAll() async {
         await current?.end(nil, dismissalPolicy: .immediate)
         for activity in Activity<HailActivity>.activities where activity.id != current?.id {
             await activity.end(nil, dismissalPolicy: .immediate)

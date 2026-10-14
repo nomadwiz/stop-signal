@@ -1,6 +1,7 @@
 // One test per acceptance item of #56, the live activity, that a simulator can prove. The activity is read from
 // HailViewModel.lockScreen, and what each change does to it from LiveActivities.step, which LiveActivities carries out
 // through ActivityKit; the device checks are in the pull request.
+import ActivityKit
 import XCTest
 @testable import StopSignal
 
@@ -101,6 +102,8 @@ final class LiveActivityTests: XCTestCase {
             model.done()
             XCTAssertNil(model.lockScreen)
             XCTAssertEqual(LiveActivities.step(from: end, to: nil), .remove)
+            // An outcome with no activity before it, as when Live Activities are off, starts none.
+            XCTAssertEqual(LiveActivities.step(from: nil, to: end), .none)
         }
 
         fixes.send(10, from: melrose)
@@ -132,5 +135,22 @@ final class LiveActivityTests: XCTestCase {
         }
         XCTAssertEqual(contrast(HailActivity.secondary, HailActivity.background), 11.2, accuracy: 0.1)
         XCTAssertGreaterThanOrEqual(contrast(HailActivity.text, HailActivity.background), 4.5)
+        XCTAssertGreaterThanOrEqual(contrast(HailActivity.onChip, HailActivity.chip), 4.5)
+    }
+
+    // ADR-038, annotated 14-10-2026: at launch the app ends any activity left from an earlier run, so none that no
+    // running app updates stays on the lock screen. The test host stands in for that earlier run. The same removal
+    // takes an activity an outcome has already ended off the lock screen when Done is tapped.
+    func testLaunchEndsAnActivityLeftFromAnEarlierRunAndDoneRemovesAnEndedOne() async throws {
+        let content = ActivityContent(state: shown("Hail sent", "Waiting for driver to confirm", "arrow.right", "confirmed").state, staleDate: nil)
+        let left = try Activity.request(attributes: HailActivity(route: "70"), content: content)
+        let ended = try Activity.request(attributes: HailActivity(route: "70"), content: content)
+        await ended.end(content, dismissalPolicy: .default)
+        XCTAssertEqual([left.activityState, ended.activityState], [.active, .ended])
+
+        // ActivityKit hands each instance its new state a moment later.
+        await LiveActivities.removeAll()
+        try await until { [left.activityState, ended.activityState] == [.dismissed, .dismissed] }
+        XCTAssertTrue(Activity<HailActivity>.activities.isEmpty)
     }
 }
