@@ -1,6 +1,6 @@
 # Runs the suite and the replay check on every push, as QR9 and ADR-004 require, then deploys
-# feed-capture to its host from master (ADR-016). A status check required on master names the
-# suite job by its id, `suite`, so renaming the job drops the requirement silently.
+# feed-capture and the hail service to their hosts from master (ADR-016). A status check required
+# on master names the suite job by its id, `suite`, so renaming the job drops the requirement silently.
 #
 # A push made with GITHUB_TOKEN starts no workflow, so the review workflow's squash merges start
 # no push run. The review dispatches this workflow on master after each merge instead:
@@ -37,10 +37,12 @@ jobs:
       - run: npm run replay:check
 
   # Uploads capture.ts to S3 and has the host put it in place, restarting capture only if it changed
-  # (infra/capture-update.sh). It signs in as the IAM user stopsignal-deploy, which may do nothing else
-  # (infra/deploy-user.sh). Its key is a secret of the deploy environment, whose branch policy admits master
-  # alone, so a workflow run on any other branch cannot read it. The account's AWS-managed service control
-  # policy denies the OpenID Connect provider a keyless sign-in would need.
+  # (infra/capture-update.sh). Uploads the hail service's archive, keeping the timetable beside it, and has a
+  # running service host install them the same way (infra/service-update.sh); a stopped one is left alone, and
+  # infra/service-host.sh installs the build when it next starts it (ADR-044). It signs in as the IAM user
+  # stopsignal-deploy, which may do nothing else (infra/deploy-user.sh). Its key is a secret of the deploy
+  # environment, whose branch policy admits master alone, so a workflow run on any other branch cannot read it.
+  # The account's AWS-managed service control policy denies the OpenID Connect provider a keyless sign-in would need.
   deploy:
     needs: suite
     if: github.ref == 'refs/heads/master'
@@ -56,9 +58,18 @@ jobs:
         with:
           persist-credentials: false
 
-      # The key is set on this step alone. actions/checkout runs before it, and a step cannot read a later
-      # step's env, so checkout never holds the key.
-      - name: Deploy capture.ts
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          check-latest: true
+          cache: npm
+
+      # Packed before the key is set, so no package script or build tool ever runs beside it.
+      - run: npm ci
+      - run: infra/service-pack.sh "$RUNNER_TEMP/service.tgz"
+
+      # The key is set on this step alone. A step cannot read a later step's env, so nothing above holds it.
+      - name: Deploy capture.ts and the hail service
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -75,3 +86,10 @@ jobs:
           aws s3 cp packages/feed-capture/src/capture.ts "s3://$bucket/deploy/capture.ts" --only-show-errors
           . infra/on-host.sh
           on_host "$(sed "s/BUCKET/$bucket/g" infra/capture-update.sh)"
+
+          infra/service-upload.sh "$bucket" "$RUNNER_TEMP/service.tgz"
+          if INSTANCE=stopsignal-service . infra/on-host.sh; then
+            on_host "$(sed "s/BUCKET/$bucket/g" infra/service-update.sh)"
+          else
+            echo "the service host is stopped; infra/service-host.sh installs this build when it next starts it"
+          fi
