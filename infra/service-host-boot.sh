@@ -25,7 +25,7 @@ install -d /opt/stopsignal /etc/caddy
 # starts seq again at 1, never repeats a seq within a file (ADR-017, decided 11-10-2026). Standard error, the
 # banner and the timetable line, goes to the journal. The Auckland Transport key is read at every start, as
 # capture's is, so starting the instance opens a field-test window in which the service polls the feed (ADR-044
-# decision 2, annotated by the owner's decision 53).
+# decision 2).
 cat > /opt/stopsignal/run-service.sh <<EOF
 #!/bin/sh
 # set -e stops here if the key cannot be read, so the journal shows the AWS error.
