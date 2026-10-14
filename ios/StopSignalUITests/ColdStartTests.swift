@@ -1,5 +1,6 @@
-// Usage: B7's two cold-start times (ADR-046), measured by hand on the iPhone 17 simulator. The StopSignal scheme, which
-// ios.yml runs, leaves this target out; its own scheme runs it, with the hail service running locally:
+// Usage: B7's two cold-start times (ADR-046), measured by hand on the iPhone 17 simulator in the Release build. The
+// StopSignal scheme, which ios.yml runs, leaves this target out; its own scheme runs it, with the hail service running
+// locally:
 //   PORT=8080 node packages/hail-service/src/main.ts
 //   xcodebuild test -project ios/StopSignal.xcodeproj -scheme StopSignalUITests \
 //     -destination 'platform=iOS Simulator,name=iPhone 17'
@@ -24,7 +25,6 @@ final class ColdStartTests: XCTestCase {
 
     // The Arm tap to the Armed screen, against B7's ≤ 1 s, with a decisive fix to hand: the simulator stands at the
     // stop. The app times it between its own B7 signposts, so the harness's taps and polling stay outside the number.
-    // Register's leaving ends the iteration.
     func testArmTapToArmed() {
         XCUIDevice.shared.location = XCUILocation(location: stop)
         let app = XCUIApplication()
@@ -32,15 +32,22 @@ final class ColdStartTests: XCTestCase {
         addTeardownBlock { app.resetAuthorizationStatus(for: .location) }
         app.launch()
         let allow = XCUIApplication(bundleIdentifier: "com.apple.springboard").buttons["Allow While Using App"]
-        if allow.waitForExistence(timeout: 3) { allow.tap() }
+        if allow.waitForExistence(timeout: 10) { allow.tap() }
         let arm = app.buttons["Arm hail for the 309"]
         measure(metrics: [XCTOSSignpostMetric(subsystem: "com.nomadwiz.StopSignal", category: "B7", name: "Arm")], options: tenRuns) {
             app.launch()
-            app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Onehunga Station, stop 1039'")).firstMatch.tap()
+            // The row exists once the first fix sorts it to the top of the list.
+            let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Onehunga Station, stop 1039'")).firstMatch
+            XCTAssert(row.waitForExistence(timeout: 5))
+            row.tap()
             // Register's push has to settle first, or the tap lands where the button was mid-slide.
             XCTAssert(arm.waitForExistence(timeout: 5))
             arm.tap()
-            XCTAssert(arm.waitForNonExistence(timeout: 10))
+            // Cancelling, after the interval has ended, leaves the next iteration a hail the service does not yet hold.
+            let cancel = app.buttons["Cancel hail"]
+            XCTAssert(cancel.waitForExistence(timeout: 10))
+            cancel.tap()
+            XCTAssert(cancel.waitForNonExistence(timeout: 10))
         }
     }
 }
