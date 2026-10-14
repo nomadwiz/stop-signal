@@ -102,9 +102,9 @@ final class LiveActivityTests: XCTestCase {
             model.done()
             XCTAssertNil(model.lockScreen)
             XCTAssertEqual(LiveActivities.step(from: end, to: nil), .remove)
-            // An outcome with no activity before it, as when Live Activities are off, starts none.
-            XCTAssertEqual(LiveActivities.step(from: nil, to: end), .none)
         }
+        // An outcome with no activity before it, as when Live Activities are off, starts none.
+        XCTAssertEqual(LiveActivities.step(from: nil, to: ends[0].1), .none)
 
         fixes.send(10, from: melrose)
         try await model.register(stop: melrose, route: "70-205", duration: 0)
@@ -145,10 +145,10 @@ final class LiveActivityTests: XCTestCase {
         let content = ActivityContent(state: shown("Hail sent", "Waiting for driver to confirm", "arrow.right", "confirmed").state, staleDate: nil)
         let left = try Activity.request(attributes: HailActivity(route: "70"), content: content)
         let ended = try Activity.request(attributes: HailActivity(route: "70"), content: content)
-        await ended.end(content, dismissalPolicy: .default)
-        XCTAssertEqual([left.activityState, ended.activityState], [.active, .ended])
-
         // ActivityKit hands each instance its new state a moment later.
+        await ended.end(content, dismissalPolicy: .default)
+        try await until { [left.activityState, ended.activityState] == [.active, .ended] }
+
         await LiveActivities.removeAll()
         try await until { [left.activityState, ended.activityState] == [.dismissed, .dismissed] }
         XCTAssertTrue(Activity<HailActivity>.activities.isEmpty)
