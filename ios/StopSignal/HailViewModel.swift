@@ -14,7 +14,11 @@ struct Notifier {
     static var centre: Notifier {
         Notifier(ask: { UNUserNotificationCenter.current().requestAuthorization(options: .alert) { _, _ in } },
                  raise: { UNUserNotificationCenter.current().add($0) { _ in } },
-                 clear: { UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ["outcome"]) })
+                 // Pending as well as delivered, so an outcome still being added when its hail ends never appears.
+                 clear: {
+                     UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["outcome"])
+                     UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ["outcome"])
+                 })
     }
 }
 
