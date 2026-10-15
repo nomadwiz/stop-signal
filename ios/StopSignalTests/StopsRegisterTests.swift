@@ -69,17 +69,18 @@ final class StopsRegisterTests: XCTestCase {
         HailViewModel(api: HailApi(base: URL(string: "https://hail.test")!, handle: "h", session: session), fixes: FakeFixes(), wait: .zero)
     }
 
-    // ADR-043: the stops on the seven routes through Melrose Street, each route by the id Register sends.
-    func testStopsJSONHoldsTheStopsOnTheSevenRoutesThroughMelroseStreet() throws {
+    // ADR-043: the stops on the routes through Melrose Street, cut from the deployed service's timetable (#176), each
+    // route by the id Register sends.
+    func testStopsJSONHoldsTheStopsOnTheRoutesThroughMelroseStreet() throws {
         let file = try JSONSerialization.jsonObject(with: Data(contentsOf: Bundle.main.url(forResource: "stops", withExtension: "json")!)) as! [String: Any]
-        XCTAssertEqual(file["source"] as? String, "packages/replay/fixtures/gtfs.zip, stops valid 20260917–20261231")
+        XCTAssertEqual(file["source"] as? String, "deploy/service/gtfs.zip, stops valid 20261005–20270207")
         XCTAssertEqual(Set(Stop.bundled.map(\.id)).count, Stop.bundled.count)
-        XCTAssertEqual(Set(Stop.bundled.flatMap(\.routes).map(\.shortName)), ["30", "309", "64", "70", "75", "INN", "295"])
+        XCTAssertEqual(Set(Stop.bundled.flatMap(\.routes).map(\.shortName)), ["30", "64", "70", "75", "295", "309", "309X", "866", "966", "INN"])
         XCTAssertEqual(melrose.code, "7177")
         XCTAssertEqual(melrose.name, "Melrose Street")
         XCTAssertEqual(melrose.lat, -36.86698)
         XCTAssertEqual(melrose.lon, 174.77468)
-        XCTAssertEqual(melrose.routes.map(\.id), ["30-202", "64-202", "70-205", "75-202", "295-202", "309-203", "INN-202"])
+        XCTAssertEqual(melrose.routes.map(\.id), ["30-202", "64-202", "70-205", "75-202", "295-202", "309-203", "309X-203", "866-203", "966-203", "INN-202"])
         XCTAssertEqual(melrose.routes[2], Stop.Route(id: "70-205", shortName: "70", headsign: "Botany To Britomart Via Panmure"))
     }
 
@@ -108,7 +109,7 @@ final class StopsRegisterTests: XCTestCase {
         XCTAssertEqual(metres, metres.sorted())
 
         let rows = elements(StopsScreen(model: model(), here: here))
-        XCTAssertEqual(rows.first { $0.accessibilityLabel?.hasPrefix("Melrose Street") == true }?.accessibilityLabel, "Melrose Street, stop 7177, 0 m away. Routes 30, 64, 70, 75, 295, 309, INN.")
+        XCTAssertEqual(rows.first { $0.accessibilityLabel?.hasPrefix("Melrose Street") == true }?.accessibilityLabel, "Melrose Street, stop 7177, 0 m away. Routes 30, 64, 70, 75, 295, 309, 309X, 866, 966, INN.")
     }
 
     // #54 acceptance 2: route and stop on one screen, each with its own Change, before arming; a stop with several

@@ -10,8 +10,8 @@ import XCTest
 
 @MainActor
 final class ColdStartTests: XCTestCase {
-    // Onehunga Station, stop 1039, whose one route takes Register straight to its Arm button.
-    private let stop = CLLocation(latitude: -36.92543, longitude: 174.78576)
+    // Onehunga Station, stop 1040, whose one route takes Register straight to its Arm button.
+    private let stop = CLLocation(latitude: -36.92543, longitude: 174.78565)
 
     // Launch to first frame, against B7's ≤ 400 ms.
     func testLaunchToFirstFrame() {
@@ -39,7 +39,7 @@ final class ColdStartTests: XCTestCase {
         measure(metrics: [XCTOSSignpostMetric(subsystem: "com.nomadwiz.StopSignal", category: "B7", name: "Arm")], options: options) {
             app.launch()
             // The row exists once the first fix sorts it to the top of the list.
-            let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Onehunga Station, stop 1039'")).firstMatch
+            let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Onehunga Station, stop 1040'")).firstMatch
             XCTAssert(row.waitForExistence(timeout: 5))
             row.tap()
             // Register's push has to settle first, or the tap lands where the button was mid-slide.

@@ -2,10 +2,13 @@
 // stop on the routes through one stop, each with the routes that pick up there and their usual headsign there. The
 // Stops screen sorts and searches it on the device, so no location leaves the phone (QR8).
 //
-// Usage: node ios/cut-stops.ts <gtfs.zip> <stop_id>
-//   node ios/cut-stops.ts packages/replay/fixtures/gtfs.zip 7177-4660a5ff
-//   Writes ios/StopSignal/stops.json. Regenerate it from the timetable the service loads, whenever that timetable
-//   changes, so the app offers only stop and route ids the service knows.
+// Usage: node ios/cut-stops.ts <gtfs.zip> <stop_id> [source]
+//   aws s3 cp s3://<bucket>/deploy/service/gtfs.zip <dir>/gtfs.zip --profile stopsignal
+//   node ios/cut-stops.ts <dir>/gtfs.zip 7177-4660a5ff deploy/service/gtfs.zip
+//   Writes ios/StopSignal/stops.json, naming its timetable as `source`, or as <gtfs.zip> without one. Regenerate it
+//   from the timetable the deployed service loads, deploy/service/gtfs.zip in the archive bucket (ADR-043 decision 2),
+//   whenever that timetable changes, so the app offers only stop and route ids the service knows; then run
+//   cut-stops.test.ts with GTFS_ZIP set, as it says.
 import { realpathSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { zipRows } from '../packages/hail-service/src/gtfs-static.ts';
@@ -64,9 +67,9 @@ export function cutStops(timetable: Timetable, through: string) {
 }
 
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const [zipPath, through] = process.argv.slice(2);
+  const [zipPath, through, named = zipPath] = process.argv.slice(2);
   if (!zipPath || !through) {
-    console.error('Usage: node ios/cut-stops.ts <gtfs.zip> <stop_id>');
+    console.error('Usage: node ios/cut-stops.ts <gtfs.zip> <stop_id> [source]');
     process.exit(1);
   }
   const rows = async (file: string) => {
@@ -76,7 +79,7 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
   };
   const timetable = { trips: await rows('trips.txt'), stopTimes: await rows('stop_times.txt'), routes: await rows('routes.txt'), stops: await rows('stops.txt') };
   const { stops, routes, from, to } = cutStops(timetable, through);
-  const source = `${zipPath}, stops valid ${from}–${to}`;
+  const source = `${named}, stops valid ${from}–${to}`;
   // One stop per line, so a regenerated file diffs by stop.
   writeFileSync(new URL('StopSignal/stops.json', import.meta.url), `{"source":${JSON.stringify(source)},"stops":[\n${stops.map((s) => JSON.stringify(s)).join(',\n')}\n]}\n`);
   console.log(`${stops.length} stops on routes ${routes.join(', ')}`);
