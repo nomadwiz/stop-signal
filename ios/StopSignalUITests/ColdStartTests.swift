@@ -1,6 +1,6 @@
 // Usage: B7's two cold-start times (ADR-046), measured by hand on the iPhone 17 simulator in the Release build. The
 // StopSignal scheme, which ios.yml runs, leaves this target out; its own scheme runs it, with the hail service running
-// locally:
+// locally, which testArmTapToArmed points the app at through STOPSIGNAL_BASE_URL:
 //   PORT=8080 node packages/hail-service/src/main.ts
 //   xcodebuild test -project ios/StopSignal.xcodeproj -scheme StopSignalUITests \
 //     -destination 'platform=iOS Simulator,name=iPhone 17'
@@ -25,6 +25,7 @@ final class ColdStartTests: XCTestCase {
     func testArmTapToArmed() {
         XCUIDevice.shared.location = XCUILocation(location: stop)
         let app = XCUIApplication()
+        app.launchEnvironment["STOPSIGNAL_BASE_URL"] = "http://localhost:8080"
         // The unit tests' Stops screen expects no location on the simulator, so the grant ends with this test.
         addTeardownBlock { app.resetAuthorizationStatus(for: .location) }
         app.launch()
