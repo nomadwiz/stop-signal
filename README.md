@@ -26,7 +26,7 @@ The passenger app needs Xcode 16 or later, and its tests run on an iPhone simula
 The app addresses the deployed service, `https://52-64-33-196.sslip.io`. The simulator shares the Mac's network, so to run the app against a service on the Mac instead, start it and launch the installed app with `STOPSIGNAL_BASE_URL` in its environment, or set that variable in the StopSignal scheme's Run arguments in Xcode:
 
     PORT=8080 node packages/hail-service/src/main.ts
-    SIMCTL_CHILD_STOPSIGNAL_BASE_URL=http://localhost:8080 xcrun simctl launch booted com.nomadwiz.StopSignal
+    SIMCTL_CHILD_STOPSIGNAL_BASE_URL=http://localhost:8080 xcrun simctl launch --terminate-running-process booted com.nomadwiz.StopSignal
 
 B7's cold-start times (ADR-046) run by hand from the `StopSignalUITests` scheme, with the hail service running locally; `ios/StopSignalUITests/ColdStartTests.swift` gives the commands.
 
