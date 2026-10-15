@@ -23,6 +23,11 @@ The passenger app needs Xcode 16 or later, and its tests run on an iPhone simula
 
     xcodebuild test -project ios/StopSignal.xcodeproj -scheme StopSignal -destination 'platform=iOS Simulator,name=iPhone 17'
 
+The app addresses the deployed service, `https://52-64-33-196.sslip.io`. The simulator shares the Mac's network, so to run the app against a service on the Mac instead, start it and launch the installed app with `STOPSIGNAL_BASE_URL` in its environment, or set that variable in the StopSignal scheme's Run arguments in Xcode:
+
+    PORT=8080 node packages/hail-service/src/main.ts
+    SIMCTL_CHILD_STOPSIGNAL_BASE_URL=http://localhost:8080 xcrun simctl launch booted com.nomadwiz.StopSignal
+
 B7's cold-start times (ADR-046) run by hand from the `StopSignalUITests` scheme, with the hail service running locally; `ios/StopSignalUITests/ColdStartTests.swift` gives the commands.
 
 ## Where files belong
@@ -34,6 +39,6 @@ B7's cold-start times (ADR-046) run by hand from the `StopSignalUITests` scheme,
 | `packages/console/` | The stand-in driver console |
 | `packages/feed-capture/` | The GTFS-Realtime poller that archives raw snapshots |
 | `packages/replay/` | The replay harness |
-| `ios/` | The passenger app. `ios/StopSignal/tokens.json` is a byte-identical copy of the documents repository's `doc/design/design-system/tokens.json`. `ios/StopSignal/stops.json` is cut from the timetable by `ios/cut-stops.ts`. `ios/StopSignalWidget/` is the widget extension that draws the live activity; it also builds `ios/StopSignal/HailActivity.swift`, `Tokens.swift` and `tokens.json` |
+| `ios/` | The passenger app. `ios/StopSignal/tokens.json` is a byte-identical copy of the documents repository's `doc/design/design-system/tokens.json`. `ios/StopSignal/stops.json` is cut from the deployed service's timetable by `ios/cut-stops.ts`, whose usage comment gives the commands. `ios/StopSignalWidget/` is the widget extension that draws the live activity; it also builds `ios/StopSignal/HailActivity.swift`, `Tokens.swift` and `tokens.json` |
 | `infra/` | Scripts that stand up and check the AWS hosts |
 | `test/` | Guards over the whole repository |
