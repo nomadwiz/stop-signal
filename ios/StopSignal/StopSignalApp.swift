@@ -6,8 +6,7 @@ struct StopSignalApp: App {
     @State private var model: HailViewModel
 
     init() {
-        // ponytail: the service's address until #50 deploys it over HTTPS.
-        let model = HailViewModel(api: HailApi(base: URL(string: "http://localhost:8080")!, handle: Handle.current()), fixes: DeviceFixes())
+        let model = HailViewModel(api: HailApi(base: HailApi.address(), handle: Handle.current()), fixes: DeviceFixes())
         _model = State(initialValue: model)
         LiveActivities.follow(model)
     }

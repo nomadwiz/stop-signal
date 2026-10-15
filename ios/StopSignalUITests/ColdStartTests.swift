@@ -1,6 +1,6 @@
 // Usage: B7's two cold-start times (ADR-046), measured by hand on the iPhone 17 simulator in the Release build. The
 // StopSignal scheme, which ios.yml runs, leaves this target out; its own scheme runs it, with the hail service running
-// locally:
+// locally, which testArmTapToArmed points the app at through STOPSIGNAL_BASE_URL:
 //   PORT=8080 node packages/hail-service/src/main.ts
 //   xcodebuild test -project ios/StopSignal.xcodeproj -scheme StopSignalUITests \
 //     -destination 'platform=iOS Simulator,name=iPhone 17'
@@ -10,8 +10,8 @@ import XCTest
 
 @MainActor
 final class ColdStartTests: XCTestCase {
-    // Onehunga Station, stop 1039, whose one route takes Register straight to its Arm button.
-    private let stop = CLLocation(latitude: -36.92543, longitude: 174.78576)
+    // Onehunga Station, stop 1040, whose one route takes Register straight to its Arm button.
+    private let stop = CLLocation(latitude: -36.92543, longitude: 174.78565)
 
     // Launch to first frame, against B7's ≤ 400 ms.
     func testLaunchToFirstFrame() {
@@ -25,6 +25,7 @@ final class ColdStartTests: XCTestCase {
     func testArmTapToArmed() {
         XCUIDevice.shared.location = XCUILocation(location: stop)
         let app = XCUIApplication()
+        app.launchEnvironment["STOPSIGNAL_BASE_URL"] = "http://localhost:8080"
         // The unit tests' Stops screen expects no location on the simulator, so the grant ends with this test.
         addTeardownBlock { app.resetAuthorizationStatus(for: .location) }
         app.launch()
@@ -38,7 +39,7 @@ final class ColdStartTests: XCTestCase {
         measure(metrics: [XCTOSSignpostMetric(subsystem: "com.nomadwiz.StopSignal", category: "B7", name: "Arm")], options: options) {
             app.launch()
             // The row exists once the first fix sorts it to the top of the list.
-            let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Onehunga Station, stop 1039'")).firstMatch
+            let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Onehunga Station, stop 1040'")).firstMatch
             XCTAssert(row.waitForExistence(timeout: 5))
             row.tap()
             // Register's push has to settle first, or the tap lands where the button was mid-slide.

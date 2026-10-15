@@ -153,6 +153,13 @@ final class StopSignalTests: XCTestCase {
         XCTAssertFalse(StubProtocol.requests[0].url.absoluteString.localizedCaseInsensitiveContains(handle))
     }
 
+    // #176 acceptance 1: the deployed service over HTTPS (ADR-044, annotated 14-10-2026), unless the launch
+    // environment's STOPSIGNAL_BASE_URL names another, as ColdStartTests does for a local service.
+    func testTheAppAddressesTheDeployedServiceUnlessTheLaunchEnvironmentOverridesIt() {
+        XCTAssertEqual(HailApi.address([:]), URL(string: "https://52-64-33-196.sslip.io")!)
+        XCTAssertEqual(HailApi.address(["STOPSIGNAL_BASE_URL": "http://localhost:8080"]), URL(string: "http://localhost:8080")!)
+    }
+
     // ADR-038 decisions 1 and 3: colours, type styles, spacing and target sizes are read from tokens.json.
     func testColoursTypeSpacingAndTargetsComeFromTokensJSON() {
         func hex(_ name: String, _ traits: UITraitCollection) -> String {
