@@ -1,14 +1,26 @@
 {
   "Version": "2012-10-17",
   "Statement": [
-    { "Sid": "Upload", "Effect": "Allow", "Action": "s3:PutObject", "Resource": "arn:aws:s3:::BUCKET/deploy/capture.ts" },
+    {
+      "Sid": "Upload",
+      "Effect": "Allow",
+      "Action": "s3:PutObject",
+      "Resource": ["arn:aws:s3:::BUCKET/deploy/capture.ts", "arn:aws:s3:::BUCKET/deploy/service/service.tgz", "arn:aws:s3:::BUCKET/deploy/service/gtfs.zip"]
+    },
+    {
+      "Sid": "FindTimetable",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::BUCKET",
+      "Condition": { "StringEquals": { "s3:prefix": "deploy/service/gtfs.zip" } }
+    },
     { "Sid": "FindHost", "Effect": "Allow", "Action": "ec2:DescribeInstances", "Resource": "*" },
     {
-      "Sid": "RunOnCaptureHost",
+      "Sid": "RunOnHosts",
       "Effect": "Allow",
       "Action": "ssm:SendCommand",
       "Resource": "arn:aws:ec2:ap-southeast-2:ACCOUNT:instance/*",
-      "Condition": { "StringEquals": { "ssm:resourceTag/Name": "stopsignal-capture" } }
+      "Condition": { "StringEquals": { "ssm:resourceTag/Name": ["stopsignal-capture", "stopsignal-service"] } }
     },
     { "Sid": "ShellDocument", "Effect": "Allow", "Action": "ssm:SendCommand", "Resource": "arn:aws:ssm:ap-southeast-2::document/AWS-RunShellScript" },
     { "Sid": "ReadResult", "Effect": "Allow", "Action": "ssm:GetCommandInvocation", "Resource": "*" }

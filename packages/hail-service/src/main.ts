@@ -1,6 +1,8 @@
-// Usage: [AT_KEY=<subscription key>] PORT=8080 node packages/hail-service/src/main.ts
+// Usage: [AT_KEY=<subscription key>] [GTFS_ZIP=<gtfs.zip>] PORT=8080 node packages/hail-service/src/main.ts
 //   With AT_KEY set, polls Auckland Transport's feed every 20 s into the loop (ADR-044); run it only for field-test
 //   windows, since it shares capture's quota. Without it, polls nothing.
+//   With GTFS_ZIP set, loads today's Auckland service day from that timetable before it listens (ADR-043); the host
+//   restarts it at 04:00 to load the next. Without it, the timetable is empty and no vehicle resolves.
 // Runs the hail service (ADR-032, annotated 05-10-2026): the decision loop on the system clock, applying each event
 // through the hail coordinator (#32), the driver and passenger channels, and the one HTTP server, on 127.0.0.1 only,
 // behind Caddy, which terminates TLS (#50). Decisions are written to stdout as JSON Lines, and nothing else is.
@@ -12,7 +14,7 @@ import { recorder } from '../../hail-core/src/trace.ts';
 import { POLL_MS } from '../../feed-capture/src/capture.ts';
 import { driverChannel } from './driver-channel.ts';
 import { pollFeed } from './gtfs-realtime.ts';
-import type { StaticIndex } from './gtfs-static.ts';
+import { loadServiceDay, type StaticIndex } from './gtfs-static.ts';
 import { passengerChannel } from './passenger-channel.ts';
 import { hailServer } from './server.ts';
 
@@ -24,11 +26,16 @@ const DECEL_MPS2 = 0.9;
 const DWELL_MS = 30_000;
 
 const clock = { now: () => Date.now() };
-// ponytail: no service day is loaded, so no tick's vehicle resolves and no hail commits; #50 loads it (ADR-043, annotated 11-10-2026).
+// en-CA formats a date as YYYY-MM-DD.
+const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Pacific/Auckland' }).format(Date.now()).replaceAll('-', '');
+const zip = process.env.GTFS_ZIP;
 // Typed as the StaticIndex loadServiceDay returns, so tsc checks it satisfies the coordinator's ServiceDay.
-const day: StaticIndex = { day: '', previousDay: '', stops: new Map(), routes: new Map(), trips: new Map(), lateTrips: new Map(), tripsAtStop: new Map(), shapes: new Map() };
+const day: StaticIndex = zip
+  ? await loadServiceDay(zip, today)
+  : { day: '', previousDay: '', stops: new Map(), routes: new Map(), trips: new Map(), lateTrips: new Map(), tripsAtStop: new Map(), shapes: new Map() };
+if (zip) console.error(`timetable ${zip}: service day ${day.day}, ${day.trips.size} trips, ${day.stops.size} stops`);
 const signals = driverChannel(day);
-// ponytail: stdout, which a restart starts again at seq 1; ADR-017's open item on a file and a restarted seq is #50's.
+// stdout, which a restart starts again at seq 1: the host writes each run to a file of its own (ADR-017, decided 11-10-2026).
 const record = recorder(clock, { append: (r) => console.log(JSON.stringify(r)) });
 
 const wakeups = scheduler<HailEvent>(clock, eventLoop<HailEvent>((e) => apply(e)));

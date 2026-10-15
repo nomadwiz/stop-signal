@@ -1,6 +1,6 @@
 # Runs the suite and the replay check on every push, as QR9 and ADR-004 require, then deploys
-# feed-capture to its host from master (ADR-016). A status check required on master names the
-# suite job by its id, `suite`, so renaming the job drops the requirement silently.
+# feed-capture and the hail service to their hosts from master (ADR-016). A status check required
+# on master names the suite job by its id, `suite`, so renaming the job drops the requirement silently.
 #
 # A push made with GITHUB_TOKEN starts no workflow, so the review workflow's squash merges start
 # no push run. The review dispatches this workflow on master after each merge instead:
@@ -36,13 +36,39 @@ jobs:
       - run: npm test
       - run: npm run replay:check
 
-  # Uploads capture.ts to S3 and has the host put it in place, restarting capture only if it changed
-  # (infra/capture-update.sh). It signs in as the IAM user stopsignal-deploy, which may do nothing else
-  # (infra/deploy-user.sh). Its key is a secret of the deploy environment, whose branch policy admits master
-  # alone, so a workflow run on any other branch cannot read it. The account's AWS-managed service control
-  # policy denies the OpenID Connect provider a keyless sign-in would need.
-  deploy:
+  # Packs the hail service in a job of its own, since npm ci's install scripts and the console's build run
+  # here: a step can reach later steps of its job through $GITHUB_PATH, $GITHUB_ENV or a process left running,
+  # so none of this may share a job with the deploy key. deploy takes only the archive.
+  pack:
     needs: suite
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          check-latest: true
+          cache: npm
+      - run: npm ci
+      - run: infra/service-pack.sh "$RUNNER_TEMP/service.tgz"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: service
+          path: ${{ runner.temp }}/service.tgz
+          retention-days: 1
+
+  # Uploads capture.ts to S3 and has the host put it in place, restarting capture only if it changed
+  # (infra/capture-update.sh). Uploads the hail service's archive, keeping the timetable beside it, and has a
+  # running service host install them the same way (infra/service-update.sh); a stopped one is left alone, and
+  # infra/service-host.sh installs the build when it next starts it (ADR-044). It signs in as the IAM user
+  # stopsignal-deploy, which may do nothing else (infra/deploy-user.sh). Its key is a secret of the deploy
+  # environment, whose branch policy admits master alone, so a workflow run on any other branch cannot read it.
+  # The account's AWS-managed service control policy denies the OpenID Connect provider a keyless sign-in would need.
+  deploy:
+    needs: pack
     if: github.ref == 'refs/heads/master'
     environment: deploy
     runs-on: ubuntu-latest
@@ -56,9 +82,14 @@ jobs:
         with:
           persist-credentials: false
 
-      # The key is set on this step alone. actions/checkout runs before it, and a step cannot read a later
-      # step's env, so checkout never holds the key.
-      - name: Deploy capture.ts
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: service
+          path: ${{ runner.temp }}
+
+      # The key is set on this step alone. actions/checkout and the download run before it, and a step cannot
+      # read a later step's env, so neither holds the key. No npm code runs in this job.
+      - name: Deploy capture.ts and the hail service
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -75,3 +106,14 @@ jobs:
           aws s3 cp packages/feed-capture/src/capture.ts "s3://$bucket/deploy/capture.ts" --only-show-errors
           . infra/on-host.sh
           on_host "$(sed "s/BUCKET/$bucket/g" infra/capture-update.sh)"
+
+          infra/service-upload.sh "$bucket" "$RUNNER_TEMP/service.tgz"
+          # An assignment, so set -e fails the job if AWS does not answer, rather than taking the host as stopped.
+          running=$(aws ec2 describe-instances --filters Name=tag:Name,Values=stopsignal-service Name=instance-state-name,Values=running \
+            --query 'Reservations[].Instances[].InstanceId' --output text)
+          if [ -n "$running" ]; then
+            INSTANCE=stopsignal-service . infra/on-host.sh
+            on_host "$(sed "s/BUCKET/$bucket/g" infra/service-update.sh)"
+          else
+            echo "the service host is stopped; infra/service-host.sh installs this build when it next starts it"
+          fi
