@@ -66,19 +66,22 @@ export function cutStops(timetable: Timetable, through: string) {
   return { stops, routes: [...routeIds].map((id) => shortNames.get(id)!).toSorted(byNumber), from, to };
 }
 
+export async function readTimetable(zipPath: string): Promise<Timetable> {
+  const rows = async (file: string) => {
+    const all: Row[] = [];
+    for await (const row of zipRows(zipPath, file)) all.push(row);
+    return all;
+  };
+  return { trips: await rows('trips.txt'), stopTimes: await rows('stop_times.txt'), routes: await rows('routes.txt'), stops: await rows('stops.txt') };
+}
+
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [zipPath, through, named = zipPath] = process.argv.slice(2);
   if (!zipPath || !through) {
     console.error('Usage: node ios/cut-stops.ts <gtfs.zip> <stop_id> [source]');
     process.exit(1);
   }
-  const rows = async (file: string) => {
-    const all: Row[] = [];
-    for await (const row of zipRows(zipPath, file)) all.push(row);
-    return all;
-  };
-  const timetable = { trips: await rows('trips.txt'), stopTimes: await rows('stop_times.txt'), routes: await rows('routes.txt'), stops: await rows('stops.txt') };
-  const { stops, routes, from, to } = cutStops(timetable, through);
+  const { stops, routes, from, to } = cutStops(await readTimetable(zipPath), through);
   const source = `${named}, stops valid ${from}–${to}`;
   // One stop per line, so a regenerated file diffs by stop.
   writeFileSync(new URL('StopSignal/stops.json', import.meta.url), `{"source":${JSON.stringify(source)},"stops":[\n${stops.map((s) => JSON.stringify(s)).join(',\n')}\n]}\n`);
