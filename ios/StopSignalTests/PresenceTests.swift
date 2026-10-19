@@ -112,8 +112,9 @@ final class PresenceTests: XCTestCase {
         XCTAssertEqual(StubProtocol.requests.map(\.url.path).filter { $0 != "/outcomes" }, ["/presence/end", "/register"])
     }
 
-    // #58 acceptance 2: no coordinate leaves the device. Every request through an armed session carries only QR8's
-    // handle, stop, route and duration, in its body, and none has a query.
+    // #58 acceptance 2 and T9 (#71): no coordinate leaves the device. Every request through an armed session carries in
+    // its body only QR8's handle, stop, route and duration, each with exactly the value the test gave, never one derived
+    // from a fix, and none has a query. The outcome stream may not have started by the cancel, so its body may be absent.
     func testNoCoordinateLeavesTheDevice() async throws {
         fixes.send(10, from: melrose)
         try await model.register(stop: melrose, route: "70-205", duration: 0)
@@ -122,10 +123,13 @@ final class PresenceTests: XCTestCase {
         try await model.cancel()
 
         XCTAssertEqual(StubProtocol.requests.map(\.url.path).filter { $0 != "/outcomes" }, ["/presence/start", "/register", "/presence/end", "/cancel"])
-        for request in StubProtocol.requests {
-            XCTAssertTrue(Set(request.body.allKeys as! [String]).isSubset(of: ["handle", "stop", "route", "duration"]), request.url.path)
-            XCTAssertNil(request.url.query, request.url.path)
-        }
+        XCTAssertTrue(Set(StubProtocol.requests.map(\.body)).isSubset(of: [
+            ["handle": "h"],
+            ["handle": "h", "stop": melrose.id],
+            ["handle": "h", "stop": melrose.id, "route": "70-205"],
+            ["handle": "h", "stop": melrose.id, "route": "70-205", "duration": 0],
+        ]))
+        for request in StubProtocol.requests { XCTAssertNil(request.url.query, request.url.path) }
     }
 
     // #58 acceptance 3, as the owner decided on 11-10-2026: the session stays open through confirmed and unacknowledged,
