@@ -10,9 +10,9 @@ struct HailApi {
     var session = URLSession.shared
 
     // The deployed service, behind Caddy over HTTPS (ADR-044, annotated 14-10-2026). STOPSIGNAL_BASE_URL in the launch
-    // environment overrides it, so the simulator and ColdStartTests reach a service running locally.
+    // environment, unless empty, overrides it, so the simulator and ColdStartTests reach a service running locally.
     static func address(_ environment: [String: String] = ProcessInfo.processInfo.environment) -> URL {
-        URL(string: environment["STOPSIGNAL_BASE_URL"] ?? "https://52-64-33-196.sslip.io")!
+        environment["STOPSIGNAL_BASE_URL"].flatMap { URL(string: $0) } ?? URL(string: "https://52-64-33-196.sslip.io")!
     }
 
     func register(stop: String, route: String, duration: Int) async throws {

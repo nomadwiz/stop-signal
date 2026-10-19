@@ -154,9 +154,11 @@ final class StopSignalTests: XCTestCase {
     }
 
     // #176 acceptance 1: the deployed service over HTTPS (ADR-044, annotated 14-10-2026), unless the launch
-    // environment's STOPSIGNAL_BASE_URL names another, as ColdStartTests does for a local service.
+    // environment's STOPSIGNAL_BASE_URL names another, as ColdStartTests does for a local service. An empty one is no
+    // address, so the app keeps the deployed service rather than crash at launch.
     func testTheAppAddressesTheDeployedServiceUnlessTheLaunchEnvironmentOverridesIt() {
         XCTAssertEqual(HailApi.address([:]), URL(string: "https://52-64-33-196.sslip.io")!)
+        XCTAssertEqual(HailApi.address(["STOPSIGNAL_BASE_URL": ""]), URL(string: "https://52-64-33-196.sslip.io")!)
         XCTAssertEqual(HailApi.address(["STOPSIGNAL_BASE_URL": "http://localhost:8080"]), URL(string: "http://localhost:8080")!)
     }
 
