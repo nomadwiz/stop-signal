@@ -278,7 +278,7 @@ describe('pollFeed', () => {
     expect(submitted).toEqual([{ kind: 'tick', reports: [{ vehicleId: 'v1', tripId: 'T1', startDate: '20261003', lat: -36.875, lon: 174.75, at: (NOW - 8) * 1000 }] }]);
   });
 
-  it('submits nothing on a failed or non-OK fetch, logs it, and resolves, so the next poll still runs', async () => {
+  it('submits nothing on a failed or non-OK fetch or an undecodable body, logs it, and resolves, so the next poll still runs', async () => {
     const submitted: HailEvent[] = [];
     const logged: string[] = [];
     const poll = (fetchFeed: typeof fetch) => pollFeed({ key: 'k', fetchFeed, index: INDEX, submit: (e) => submitted.push(e), log: (line) => logged.push(line) });
