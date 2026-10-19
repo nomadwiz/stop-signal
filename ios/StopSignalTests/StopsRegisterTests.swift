@@ -14,7 +14,7 @@ func turnOnAccessibility() throws {
     unsafeBitCast(enable, to: (@convention(c) (Bool) -> Void).self)(true)
 }
 
-// Hosting and reading screens, shared by the screen tests.
+// Hosting and reading screens, and waiting on a condition, shared by the screen tests.
 @MainActor
 extension XCTestCase {
     // `view` in a phone-sized window, kept by the test so its state lives across reads.
