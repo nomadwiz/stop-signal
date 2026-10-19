@@ -21,7 +21,7 @@ Node.js 22.18 or later in the 22 LTS line, which runs TypeScript by stripping ty
 
 ### The hail service and the driver console
 
-The service loads today's Auckland service day from Auckland Transport's published timetable. It polls Auckland Transport's live feed every 20 s with a subscription key of your own from its developer portal, <https://dev-portal.at.govt.nz>. Without `AT_KEY` it polls nothing, so no bus arrives. `read -rs` takes the key without showing it or keeping it in your shell history: paste it and press Return. Never commit it.
+The service loads today's Auckland service day from Auckland Transport's published timetable. It polls Auckland Transport's live feed with a subscription key of your own from its developer portal, <https://dev-portal.at.govt.nz>. Without `AT_KEY` it polls nothing, so no bus arrives. `read -rs` takes the key without showing it or keeping it in your shell history: paste it and press Return. Never commit it.
 
     curl -fsSLo /tmp/gtfs.zip https://gtfs.at.govt.nz/gtfs.zip
     read -rs AT_KEY && export AT_KEY
@@ -59,7 +59,7 @@ The iPhone cannot reach a service on the Mac, which listens on 127.0.0.1 alone, 
 
 To stand at a stop without going there, save this as `~/melrose.gpx`. While the app runs, add it through Debug → Simulate Location → Add GPX File to Project, then choose `melrose` from the same menu:
 
-    <gpx version="1.1"><wpt lat="-36.86698" lon="174.77468"/></gpx>
+    <gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1"><wpt lat="-36.86698" lon="174.77468"/></gpx>
 
 Choosing a team and adding the GPX file change `ios/StopSignal.xcodeproj`; undo them with `git restore ios/StopSignal.xcodeproj` rather than committing them.
 
