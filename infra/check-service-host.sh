@@ -56,6 +56,9 @@ pass "the service loaded the timetable: $line"
 
 # Each run gets a decision log of its own (ADR-017, decided 11-10-2026): a restart starts a newer file, keeps the
 # old one, and the new file holds the decision a Register leads to.
+# ponytail: run-service.sh in service-host-boot.sh opens each log before node starts, so a service failing at start,
+# retried every 10 s, leaves an empty log per attempt. Delete empty logs at start if that matters; that changes the
+# boot script's hash, so the instance is relaunched, and this check then counts only logs holding a decision.
 logs='ls /var/lib/stopsignal/decisions | sort -n'
 before=$(lines "$logs") || fail "cannot list the decision logs"
 on_host 'systemctl restart stopsignal-service' >/dev/null || fail "cannot restart the service"
