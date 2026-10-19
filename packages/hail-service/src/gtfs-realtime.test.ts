@@ -291,12 +291,12 @@ describe('pollFeed', () => {
     expect(logged).toEqual([expect.stringContaining('403'), expect.stringContaining('ECONNRESET'), expect.stringMatching(/, no tick$/)]);
   });
 
-  it('logs a tick the loop threw on as submitted, not as no tick', async () => {
+  it('logs a throw from submit as submit threw, not as no tick', async () => {
     const bytes = new Uint8Array(FeedMessage.encode(FeedMessage.fromObject({ header: { gtfsRealtimeVersion: '2.0', timestamp: NOW }, entity: [] })).finish());
     const logged: string[] = [];
 
     await pollFeed({ key: 'k', fetchFeed: async () => new Response(bytes), index: INDEX, submit: () => { throw new Error('coordinator'); }, log: (line) => logged.push(line) });
 
-    expect(logged).toEqual(['feed poll: Error: coordinator, tick submitted']);
+    expect(logged).toEqual(['feed poll: Error: coordinator, submit threw']);
   });
 });

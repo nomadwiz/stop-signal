@@ -143,7 +143,8 @@ interface Poll {
 
 // C7's live source (ADR-044): one request for the feed, as capture makes it, submitted to the loop as one tick.
 // A failed or non-OK request submits nothing and resolves, so the next poll runs; the gap is the feed-stale wakeup's.
-// A throw from the loop while it applies the tick is logged as "tick submitted": its decisions before the throw are recorded.
+// A throw from submit is logged apart from a failed request: the loop may have applied the tick in part or, if a due
+// wakeup threw first, not at all.
 export async function pollFeed({ key, fetchFeed, index, submit, log }: Poll): Promise<void> {
   let submitted = false;
   try {
@@ -160,7 +161,7 @@ export async function pollFeed({ key, fetchFeed, index, submit, log }: Poll): Pr
   } catch (error) {
     // fetch reports every network failure as "fetch failed"; the reason is in its cause.
     const cause = error instanceof Error && error.cause ? ` (${error.cause})` : '';
-    log(`feed poll: ${error}${cause}, ${submitted ? 'tick submitted' : 'no tick'}`);
+    log(`feed poll: ${error}${cause}, ${submitted ? 'submit threw' : 'no tick'}`);
   }
 }
 
