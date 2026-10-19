@@ -59,7 +59,7 @@ The iPhone cannot reach a service on the Mac, which listens on 127.0.0.1 alone, 
 
 To stand at a stop without going there, save this as `~/melrose.gpx`. While the app runs, add it through Debug → Simulate Location → Add GPX File to Project, then choose `melrose` from the same menu:
 
-    <gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1"><wpt lat="-36.86698" lon="174.77468"/></gpx>
+    <gpx version="1.1" creator="StopSignal" xmlns="http://www.topografix.com/GPX/1/1"><wpt lat="-36.86698" lon="174.77468"/></gpx>
 
 Choosing a team and adding the GPX file change `ios/StopSignal.xcodeproj`; undo them with `git restore ios/StopSignal.xcodeproj` rather than committing them.
 

@@ -56,6 +56,16 @@ describe('report', () => {
     expect(lines).toContain('| M4b, approaches with a correction | 0 / 2 = 0.0% | ≤ 10% | yes |');
     expect(lines).toContain('| M4c, approaches reaching their deadline in Unattended | 1 / 2 = 50.0% | ≤ 5% | no |');
   });
+
+  it('meets M4b at a correction on 1 approach in 10, and not at 2 in 19, just over', () => {
+    // Each log is one approach, or two where its hail moves from V1 to V2, the move a correction (#39).
+    const once = [registered('h1', 'R'), committed(T + 60_000, 'h1', 'V1', T + 90_000)];
+    const moved = [...once, committed(T + 70_000, 'h1', 'V2', T + 95_000)];
+    const withCorrections = (corrections: number, approaches = 10) => ({ built: run.built, logs: [...Array(approaches - 2 * corrections).fill(once), ...Array(corrections).fill(moved)] });
+
+    expect(report(run, withCorrections(1))).toContain('| M4b, approaches with a correction | 1 / 10 = 10.0% | ≤ 10% | yes |');
+    expect(report(run, withCorrections(2, 19))).toContain('| M4b, approaches with a correction | 2 / 19 = 10.5% | ≤ 10% | no |');
+  });
 });
 
 describe('m2', () => {

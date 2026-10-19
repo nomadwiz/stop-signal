@@ -32,10 +32,11 @@ code() {
 empty_register() { code -X POST -H 'content-type: application/json' -d '{}' "$URL/register"; }
 # The service answers once it has loaded the timetable. That takes about 10 s of CPU, and a host just started
 # has no CPU credits, so it runs at its 10% baseline and takes up to a few minutes; Caddy answers 502 meanwhile.
+# 60 tries 5 s apart: 5 minutes when each is answered at once, up to 10 when each request times out at 5 s.
 up() { for _ in $(seq 1 60); do [ "$(empty_register)" = 400 ] && return 0; sleep 5; done; return 1; }
 
 # The body lacks every key Register needs, so a 400 can only be the service's own answer (ADR-032, annotated 11-10-2026).
-up || fail "POST /register {} over HTTPS did not reach the service's 400 within 5 minutes"
+up || fail "POST /register {} over HTTPS did not reach the service's 400 in 60 tries, 5 to 10 minutes"
 pass "POST /register {} over HTTPS, with a certificate curl trusts, reaches the service's 400"
 
 # The console's four kinds of request are refused without the password; GET /signals is a stream, so with it
@@ -55,10 +56,13 @@ pass "the service loaded the timetable: $line"
 
 # Each run gets a decision log of its own (ADR-017, decided 11-10-2026): a restart starts a newer file, keeps the
 # old one, and the new file holds the decision a Register leads to.
+# ponytail: run-service.sh in service-host-boot.sh opens each log before node starts, so a service failing at start,
+# retried every 10 s, leaves an empty log per attempt. Delete empty logs at start if that matters; that changes the
+# boot script's hash, so the instance is relaunched, and this check then counts only logs holding a decision.
 logs='ls /var/lib/stopsignal/decisions | sort -n'
 before=$(lines "$logs") || fail "cannot list the decision logs"
 on_host 'systemctl restart stopsignal-service' >/dev/null || fail "cannot restart the service"
-up || fail "the service did not answer within 5 minutes of its restart"
+up || fail "the service did not answer in 60 tries, 5 to 10 minutes, after its restart"
 code -X POST -H 'content-type: application/json' \
   -d '{"handle":"6f1c2a1e-1b2c-4d3e-8f4a-5b6c7d8e9f00","stop":"7177-4660a5ff","route":"70-205","duration":0}' "$URL/register" >/dev/null
 after=$(lines "$logs") || fail "cannot list the decision logs"
@@ -92,8 +96,8 @@ rc=0; wait $signals || rc=$?
 [ $rc = 28 ] || fail "/signals closed before 610 s, with curl status $rc: $(cat "$T/signals")"
 pass "/outcomes and /signals each stayed open for 610 s with nothing sent"
 
-# The service polls every 20 s once AT_KEY is set (ADR-044), and each poll either submits a tick or logs
-# "feed poll: …, no tick". So a run with the key and no such line has ticked about 30 times over the 610 s above.
+# The service polls every 20 s once AT_KEY is set (ADR-044), and a poll that fails, or whose submit throws, logs
+# "feed poll: …". So a run with the key and no such line has ticked about 30 times over the 610 s above.
 pid='$(systemctl show -p MainPID --value stopsignal-service)'
 [ "$(lines "tr '\\0' '\\n' < /proc/$pid/environ | grep -c '^AT_KEY=.'")" = 1 ] || fail "the service runs without AT_KEY"
 journal=$(lines 'journalctl -u stopsignal-service _SYSTEMD_INVOCATION_ID=$(systemctl show -p InvocationID --value stopsignal-service) --no-pager -o cat') \
@@ -101,5 +105,5 @@ journal=$(lines 'journalctl -u stopsignal-service _SYSTEMD_INVOCATION_ID=$(syste
 # This run's timetable line shows the match selected the run, so no failed poll is not just no line at all.
 echo "$journal" | grep -q '^timetable ' || fail "the journal holds nothing of the service's current run"
 failed=$(echo "$journal" | grep '^feed poll:' || true)
-[ -z "$failed" ] || fail "$(echo "$failed" | grep -c .) feed polls failed, the last: $(echo "$failed" | tail -1)"
+[ -z "$failed" ] || fail "$(echo "$failed" | grep -c .) feed polls failed or threw in submit, the last: $(echo "$failed" | tail -1)"
 pass "the service ran with AT_KEY, and every feed poll since its restart submitted a tick"

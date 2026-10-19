@@ -713,6 +713,24 @@ describe('hailCoordinator: a stale hail with no calling bus (#163)', () => {
     expect(s.outcomes).toStrictEqual([told]);
   });
 
+  it('abandons such a hail that left and returned at the wakeup ending its dwell, with no bus of its route calling (decision 40)', () => {
+    const s = service();
+    for (const t of [T - 60_000, T - 40_000]) s.tick(t, v1(t, 380));
+    s.tick(T - 20_000, v1(T - 40_000, 380));
+    s.at(T - 30_000, register, start);
+    s.at(T);
+    // It leaves before the first tick with no bus, so that tick ends nothing; it returns at T + 20 s.
+    s.at(T + 5_000, end);
+    s.tick(T + 10_000);
+    s.at(T + 20_000, start);
+    s.tick(T + 30_000);
+
+    s.at(T + 50_000);
+
+    expect(timeline(s.records).slice(-4)).toEqual([['left', 5], ['returned', 20], ['eligible', 50], ['abandoned', 50]]);
+    expect(s.outcomes).toStrictEqual([told]);
+  });
+
   it('keeps it waiting at the deadline wakeup on a standing stale pick that still calls, and ends it once that pick stops calling (decision 37)', () => {
     const s = service();
     // V1's last report, at T, is stale at the commit wakeup, so the hail waits on its deadline, T + 72.4 s. V2 stands

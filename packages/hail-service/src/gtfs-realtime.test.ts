@@ -278,15 +278,25 @@ describe('pollFeed', () => {
     expect(submitted).toEqual([{ kind: 'tick', reports: [{ vehicleId: 'v1', tripId: 'T1', startDate: '20261003', lat: -36.875, lon: 174.75, at: (NOW - 8) * 1000 }] }]);
   });
 
-  it('submits nothing on a failed or non-OK fetch, logs it, and resolves, so the next poll still runs', async () => {
+  it('submits nothing on a failed or non-OK fetch or an undecodable body, logs it, and resolves, so the next poll still runs', async () => {
     const submitted: HailEvent[] = [];
     const logged: string[] = [];
     const poll = (fetchFeed: typeof fetch) => pollFeed({ key: 'k', fetchFeed, index: INDEX, submit: (e) => submitted.push(e), log: (line) => logged.push(line) });
 
     await poll(async () => new Response('quota', { status: 403 }));
     await poll(async () => Promise.reject(new TypeError('fetch failed', { cause: new Error('ECONNRESET') })));
+    await poll(async () => new Response(new Uint8Array([0xff])));
 
     expect(submitted).toEqual([]);
-    expect(logged).toEqual([expect.stringContaining('403'), expect.stringContaining('ECONNRESET')]);
+    expect(logged).toEqual([expect.stringContaining('403'), expect.stringContaining('ECONNRESET'), expect.stringMatching(/, no tick$/)]);
+  });
+
+  it('logs a throw from submit as submit threw, not as no tick', async () => {
+    const bytes = new Uint8Array(FeedMessage.encode(FeedMessage.fromObject({ header: { gtfsRealtimeVersion: '2.0', timestamp: NOW }, entity: [] })).finish());
+    const logged: string[] = [];
+
+    await pollFeed({ key: 'k', fetchFeed: async () => new Response(bytes), index: INDEX, submit: () => { throw new Error('coordinator'); }, log: (line) => logged.push(line) });
+
+    expect(logged).toEqual(['feed poll: Error: coordinator, submit threw']);
   });
 });

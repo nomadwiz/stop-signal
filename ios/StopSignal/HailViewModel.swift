@@ -14,7 +14,8 @@ struct Notifier {
     static var centre: Notifier {
         Notifier(ask: { UNUserNotificationCenter.current().requestAuthorization(options: .alert) { _, _ in } },
                  raise: { UNUserNotificationCenter.current().add($0) { _ in } },
-                 // Pending as well as delivered, so an outcome still being added when its hail ends never appears.
+                 // Pending as well as delivered, so an outcome already queued when its hail ends does not appear; one
+                 // whose add has not reached the queue yet still can (ADR-038's [GAP] on Done during an add).
                  clear: {
                      UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["outcome"])
                      UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ["outcome"])

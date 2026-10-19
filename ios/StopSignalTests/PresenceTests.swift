@@ -128,7 +128,7 @@ final class PresenceTests: XCTestCase {
             ["handle": "h", "stop": melrose.id],
             ["handle": "h", "stop": melrose.id, "route": "70-205"],
             ["handle": "h", "stop": melrose.id, "route": "70-205", "duration": 0],
-        ]))
+        ]), "\(StubProtocol.requests.map(\.body))")
         for request in StubProtocol.requests { XCTAssertNil(request.url.query, request.url.path) }
     }
 

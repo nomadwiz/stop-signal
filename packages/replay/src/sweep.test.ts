@@ -43,7 +43,7 @@ describe('sweep', () => {
     expect(firm.dS[1]).toBeCloseTo(8.803, 3);
   });
 
-  it('leaves out of D a commit with no deadline and a hail that joins a live signal, which M2 still counts', () => {
+  it('leaves out of D a hail that joins a live signal, which M2 still counts, and a commit with no deadline, which M2 counts apart', () => {
     // V1 runs at 10 m/s on route R, as above, and V2 on route Q stands 300 m out, within reach (ADR-037). Two R
     // passengers commit on V1 together, the second joining the first's signal; one Q passenger commits on V2 at once.
     const snaps = [0, 20_000, 40_000, 60_000, 80_000, 100_000].map((dt) => ({ at: T + dt, reports: [report(1_100 - dt / 100, T + dt), report(300, T + dt, 'V2', 'B1')] }));
