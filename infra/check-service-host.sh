@@ -92,8 +92,8 @@ rc=0; wait $signals || rc=$?
 [ $rc = 28 ] || fail "/signals closed before 610 s, with curl status $rc: $(cat "$T/signals")"
 pass "/outcomes and /signals each stayed open for 610 s with nothing sent"
 
-# The service polls every 20 s once AT_KEY is set (ADR-044), and each poll either submits a tick or logs
-# "feed poll: …, no tick". So a run with the key and no such line has ticked about 30 times over the 610 s above.
+# The service polls every 20 s once AT_KEY is set (ADR-044), and a poll that fails, or whose tick the loop throws
+# on, logs "feed poll: …". So a run with the key and no such line has ticked about 30 times over the 610 s above.
 pid='$(systemctl show -p MainPID --value stopsignal-service)'
 [ "$(lines "tr '\\0' '\\n' < /proc/$pid/environ | grep -c '^AT_KEY=.'")" = 1 ] || fail "the service runs without AT_KEY"
 journal=$(lines 'journalctl -u stopsignal-service _SYSTEMD_INVOCATION_ID=$(systemctl show -p InvocationID --value stopsignal-service) --no-pager -o cat') \

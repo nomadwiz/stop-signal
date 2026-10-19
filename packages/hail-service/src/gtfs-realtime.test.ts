@@ -285,8 +285,18 @@ describe('pollFeed', () => {
 
     await poll(async () => new Response('quota', { status: 403 }));
     await poll(async () => Promise.reject(new TypeError('fetch failed', { cause: new Error('ECONNRESET') })));
+    await poll(async () => new Response(new Uint8Array([0xff])));
 
     expect(submitted).toEqual([]);
-    expect(logged).toEqual([expect.stringContaining('403'), expect.stringContaining('ECONNRESET')]);
+    expect(logged).toEqual([expect.stringContaining('403'), expect.stringContaining('ECONNRESET'), expect.stringMatching(/, no tick$/)]);
+  });
+
+  it('logs a tick the loop threw on as submitted, not as no tick', async () => {
+    const bytes = new Uint8Array(FeedMessage.encode(FeedMessage.fromObject({ header: { gtfsRealtimeVersion: '2.0', timestamp: NOW }, entity: [] })).finish());
+    const logged: string[] = [];
+
+    await pollFeed({ key: 'k', fetchFeed: async () => new Response(bytes), index: INDEX, submit: () => { throw new Error('coordinator'); }, log: (line) => logged.push(line) });
+
+    expect(logged).toEqual(['feed poll: Error: coordinator, tick submitted']);
   });
 });
