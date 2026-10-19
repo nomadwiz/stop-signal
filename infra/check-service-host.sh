@@ -32,10 +32,11 @@ code() {
 empty_register() { code -X POST -H 'content-type: application/json' -d '{}' "$URL/register"; }
 # The service answers once it has loaded the timetable. That takes about 10 s of CPU, and a host just started
 # has no CPU credits, so it runs at its 10% baseline and takes up to a few minutes; Caddy answers 502 meanwhile.
+# 60 tries 5 s apart: 5 minutes when each is answered at once, up to 10 when each request times out at 5 s.
 up() { for _ in $(seq 1 60); do [ "$(empty_register)" = 400 ] && return 0; sleep 5; done; return 1; }
 
 # The body lacks every key Register needs, so a 400 can only be the service's own answer (ADR-032, annotated 11-10-2026).
-up || fail "POST /register {} over HTTPS did not reach the service's 400 within 5 minutes"
+up || fail "POST /register {} over HTTPS did not reach the service's 400 in 60 tries, 5 to 10 minutes"
 pass "POST /register {} over HTTPS, with a certificate curl trusts, reaches the service's 400"
 
 # The console's four kinds of request are refused without the password; GET /signals is a stream, so with it
@@ -58,7 +59,7 @@ pass "the service loaded the timetable: $line"
 logs='ls /var/lib/stopsignal/decisions | sort -n'
 before=$(lines "$logs") || fail "cannot list the decision logs"
 on_host 'systemctl restart stopsignal-service' >/dev/null || fail "cannot restart the service"
-up || fail "the service did not answer within 5 minutes of its restart"
+up || fail "the service did not answer in 60 tries, 5 to 10 minutes, after its restart"
 code -X POST -H 'content-type: application/json' \
   -d '{"handle":"6f1c2a1e-1b2c-4d3e-8f4a-5b6c7d8e9f00","stop":"7177-4660a5ff","route":"70-205","duration":0}' "$URL/register" >/dev/null
 after=$(lines "$logs") || fail "cannot list the decision logs"
