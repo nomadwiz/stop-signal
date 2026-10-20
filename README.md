@@ -169,5 +169,5 @@ Choosing a team and adding the GPX file change `ios/StopSignal.xcodeproj`. Undo 
 | `Unable to find a destination matching … name=iPhone 17` | Xcode is older than 26, or the iOS platform is missing. Update Xcode, or run `xcodebuild -downloadPlatform iOS` |
 | The service runs, but no bus ever arrives | `AT_KEY` is unset, so nothing is polled, or `GTFS_ZIP` is unset, so the timetable is empty |
 | The console shows nothing | The hail service is not running on port 8080 |
-| The app shows "No connection" or "Can't reach StopSignal" | The deployed service is not running, which happens only after marking ends, outside the owner's field-test windows. Point the simulator at a local service, as in [Which service the app uses](#which-service-the-app-uses) |
+| The app shows "No connection" or "Can't reach StopSignal" | The deployed service is not running. Point the simulator at a local service, as in [Which service the app uses](#which-service-the-app-uses) |
 | `npm test` reports one test skipped | Expected. `ios/cut-stops.test.ts` checks the app's bundled stop list against the deployed service's timetable, and runs only with `GTFS_ZIP` set |
