@@ -131,7 +131,7 @@ The console needs the hail service running on port 8080, which it proxies to.
 
 ### Which service the app uses
 
-The app addresses the deployed service at `https://52-64-33-196.sslip.io`. That service runs only during the owner's field-test windows, and its console's password is the owner's.
+The app addresses the deployed service at `https://52-64-33-196.sslip.io`. That service runs continuously while the COMP826 Milestone 2 report is being marked, so the app works without an Auckland Transport key. Outside that period it runs only during the owner's field-test windows. Its console's password is the owner's.
 
 To use the service running on your Mac instead, start it as in [Run the hail service with live buses](#run-the-hail-service-with-live-buses), run the app once from Xcode so it is installed, then relaunch it with `STOPSIGNAL_BASE_URL` set. The simulator reaches the Mac as `localhost`.
 
@@ -169,5 +169,5 @@ Choosing a team and adding the GPX file change `ios/StopSignal.xcodeproj`. Undo 
 | `Unable to find a destination matching … name=iPhone 17` | Xcode is older than 26, or the iOS platform is missing. Update Xcode, or run `xcodebuild -downloadPlatform iOS` |
 | The service runs, but no bus ever arrives | `AT_KEY` is unset, so nothing is polled, or `GTFS_ZIP` is unset, so the timetable is empty |
 | The console shows nothing | The hail service is not running on port 8080 |
-| The app shows "No connection" or "Can't reach StopSignal" | The deployed service is outside a field-test window. Point the simulator at a local service, as in [Which service the app uses](#which-service-the-app-uses) |
+| The app shows "No connection" or "Can't reach StopSignal" | The deployed service is not running, which happens only after marking ends, outside the owner's field-test windows. Point the simulator at a local service, as in [Which service the app uses](#which-service-the-app-uses) |
 | `npm test` reports one test skipped | Expected. `ios/cut-stops.test.ts` checks the app's bundled stop list against the deployed service's timetable, and runs only with `GTFS_ZIP` set |
