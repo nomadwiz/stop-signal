@@ -62,6 +62,12 @@ It has three parts: a hail service in Node.js, a driver console in the browser, 
    npm run replay:check
    ```
 
+5. Print the evaluation's results from the replay's decision logs: for each D, the share of calls resolved to the right bus, single and queued, then each measure against its target.
+
+   ```sh
+   node packages/hail-service/src/measures.ts
+   ```
+
 Two more checks run in continuous integration:
 
 ```sh
